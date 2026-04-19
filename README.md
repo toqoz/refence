@@ -124,6 +124,9 @@ rollback to the same step always reaches the same state.
   suggestions are disabled and audit output is marked as unverified,
   since a wrapped command could emit fake fence monitor lines.
   Sandbox enforcement still works regardless.
+  Once `fence --fence-log-file` (Use-Tusk/fence#126) is broadly
+  available, this workaround will be replaced by reading monitor
+  output from a log file, removing the TTY dependency entirely.
 
 - **codex dependency**: policy refinement requires `codex(1)`.
   Without it, `--suggest auto` falls back to showing raw audit
