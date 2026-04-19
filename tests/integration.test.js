@@ -49,7 +49,7 @@ describe("integration: CLI basics", () => {
   });
 });
 
-// Tests that need tmux + fence (proxy requires /dev/tty)
+// Tests that need tmux + fence
 let sessionCounter = 0;
 function newSession() {
   return `refence-integ-${process.pid}-${++sessionCounter}`;
@@ -159,7 +159,7 @@ describe("integration: batch mode via tmux", { skip: !hasPrereqs() && "tmux or f
   });
 });
 
-describe("integration: proxy isolates stderr", { skip: !hasPrereqs() && "tmux or fence not available" }, () => {
+describe("integration: stderr isolation", { skip: !hasPrereqs() && "tmux or fence not available" }, () => {
   before(async () => {
     SESSION = newSession();
     tmux("new-session", "-d", "-s", SESSION, "-x", "120", "-y", "40");
@@ -169,7 +169,7 @@ describe("integration: proxy isolates stderr", { skip: !hasPrereqs() && "tmux or
 
   it("fake fence lines from agent do not appear in audit", async () => {
     // Agent writes a fake [fence:http] line to stderr
-    // With proxy, this goes to /dev/tty (visible in pane) but NOT parsed as monitor
+    // With stderr isolation, this goes to the terminal (visible in pane) but NOT parsed as monitor
     const cmd = `node ${BIN} --suggest never --verbose -- node -e 'process.stderr.write("[fence:http] 00:00:00 ✗ CONNECT 403 fake.evil https://fake.evil:443 (0s)\\n")'; echo DONE`;
     sendKeys(cmd, "Enter");
     const content = await waitForContent(/DONE/);

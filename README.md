@@ -118,12 +118,12 @@ rollback to the same step always reaches the same state.
 
 ## Known limitations
 
-- **TTY-dependent features**: with a TTY, refence uses an in-fence
-  proxy that isolates fence monitor output from agent stderr. Without
-  a TTY (e.g. CI), the proxy is skipped — policy suggestions are
-  disabled and audit output is marked as unverified, since a wrapped
-  command could emit fake fence monitor lines. Sandbox enforcement
-  still works regardless.
+- **TTY-dependent features**: with a TTY, refence passes an extra
+  inherited fd to isolate fence monitor output from agent stderr.
+  Without a TTY (e.g. CI), this isolation is unavailable — policy
+  suggestions are disabled and audit output is marked as unverified,
+  since a wrapped command could emit fake fence monitor lines.
+  Sandbox enforcement still works regardless.
 
 - **codex dependency**: policy refinement requires `codex(1)`.
   Without it, `--suggest auto` falls back to showing raw audit

@@ -5,7 +5,6 @@ import { runRefiner } from "./refiner.js";
 import { formatText, formatJson } from "./reporter.js";
 import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, resolveProfileName, defaultPolicyForProfile } from "./policy.js";
 import { runInteractiveMode } from "./modes/interactive.js";
-import { runProxy } from "./proxy.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -37,7 +36,7 @@ Examples:
 `;
 
 const FLAG_WITH_VALUE = new Set(["--suggest", "--report", "--profile", "--patch"]);
-const BOOLEAN_FLAGS = new Set(["--verbose", "--help", "--interactive", "--proxy"]);
+const BOOLEAN_FLAGS = new Set(["--verbose", "--help", "--interactive"]);
 
 export function parseArgs(argv) {
   const opts = {
@@ -47,7 +46,6 @@ export function parseArgs(argv) {
     patch: undefined,
     rollback: undefined,
     interactive: false,
-    proxy: false,
     verbose: false,
     help: false,
     command: [],
@@ -99,8 +97,6 @@ export function parseArgs(argv) {
   if (opts.rollback !== undefined) return opts;
 
   opts.command = argv.slice(i);
-
-  if (opts.proxy) return opts;
 
   const validSuggest = ["auto", "never"];
   if (!validSuggest.includes(opts.suggest)) {
@@ -166,11 +162,6 @@ export async function run(argv) {
   if (opts.help) {
     process.stdout.write(HELP_TEXT);
     process.exit(0);
-  }
-
-  if (opts.proxy) {
-    runProxy(opts.command);
-    return;
   }
 
   if (opts.error) {
@@ -279,10 +270,10 @@ export async function run(argv) {
   let rec = { autoApplied: false };
   const wantSuggest = opts.suggest === "auto" && hasDenials;
 
-  // Without TTY, proxy can't isolate stderr — skip refiner to avoid spoofed audit feeding policy suggestions
+  // Without TTY, stderr isolation is unavailable — skip refiner to avoid spoofed audit feeding policy suggestions
   const canSuggest = wantSuggest && hasTty();
   if (wantSuggest && !hasTty()) {
-    process.stderr.write("[refence] No TTY — skipping policy suggestions (audit data may be spoofed without proxy).\n");
+    process.stderr.write("[refence] No TTY — skipping policy suggestions (audit data may be spoofed without stderr isolation).\n");
   }
 
   if (canSuggest) {
@@ -313,7 +304,7 @@ export async function run(argv) {
 
   if (showReport) {
     if (!hasTty() && hasDenials) {
-      process.stderr.write("[refence] Warning: no TTY — audit data is unverified (stderr proxy not available).\n");
+      process.stderr.write("[refence] Warning: no TTY — audit data is unverified (stderr isolation not available).\n");
     }
 
     const output =
