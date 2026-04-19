@@ -8,8 +8,8 @@ import { runInteractiveMode } from "./modes/interactive.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-const HELP_TEXT = `Usage: sense [options] [--] <command...>
-       sense --interactive -- <agent-command...>
+const HELP_TEXT = `Usage: sence [options] [--] <command...>
+       sence --interactive -- <agent-command...>
 
 Run a command inside a fence sandbox with monitoring, audit, and policy advice.
 
@@ -23,17 +23,17 @@ Options:
   --model <name>               LLM model for policy suggestions (default: gpt-5.4-mini)
   --suggest auto|never         When to generate advice (default: auto)
   --report text|json           Output format for audit report (default: text)
-  --verbose                    Always show sense audit output
+  --verbose                    Always show sence audit output
   --help                       Show this help message
 
 Examples:
-  sense npm install
-  sense --interactive -- claude -p "fix the failing tests"
-  sense --profile code:npm-i npm install
-  sense --profile code:default npm install
-  sense --profile strict npm install
-  sense --patch /tmp/sense-abc123.json npm install
-  sense --rollback
+  sence npm install
+  sence --interactive -- claude -p "fix the failing tests"
+  sence --profile code:npm-i npm install
+  sence --profile code:default npm install
+  sence --profile strict npm install
+  sence --patch /tmp/sence-abc123.json npm install
+  sence --rollback
 `;
 
 const FLAG_WITH_VALUE = new Set(["--suggest", "--report", "--profile", "--patch", "--model"]);
@@ -89,7 +89,7 @@ export function parseArgs(argv) {
       continue;
     }
     if (arg.startsWith("--")) {
-      opts.error = `Unknown flag: ${arg}. See: sense --help`;
+      opts.error = `Unknown flag: ${arg}. See: sence --help`;
       return opts;
     }
     break;
@@ -108,13 +108,13 @@ export function parseArgs(argv) {
 
   if (opts.interactive) {
     if (opts.command.length === 0) {
-      opts.error = "No command specified. Usage: sense --interactive -- <agent-command...>";
+      opts.error = "No command specified. Usage: sence --interactive -- <agent-command...>";
     }
     return opts;
   }
 
   if (opts.command.length === 0) {
-    opts.error = "No command specified. See: sense --help";
+    opts.error = "No command specified. See: sence --help";
     return opts;
   }
 
@@ -130,7 +130,7 @@ export function parseArgs(argv) {
 function getConfigDir() {
   if (process.env.XDG_CONFIG_HOME) return process.env.XDG_CONFIG_HOME;
   if (!process.env.HOME) {
-    process.stderr.write("[sense] Fatal: HOME is not set.\n");
+    process.stderr.write("[sence] Fatal: HOME is not set.\n");
     process.exit(2);
   }
   return join(process.env.HOME, ".config");
@@ -139,7 +139,7 @@ function getConfigDir() {
 function getDataDir() {
   if (process.env.XDG_DATA_HOME) return process.env.XDG_DATA_HOME;
   if (!process.env.HOME) {
-    process.stderr.write("[sense] Fatal: HOME is not set.\n");
+    process.stderr.write("[sence] Fatal: HOME is not set.\n");
     process.exit(2);
   }
   return join(process.env.HOME, ".local", "share");
@@ -151,7 +151,7 @@ function shellQuote(s) {
 }
 
 function buildSenseCmd(opts) {
-  const parts = ["sense"];
+  const parts = ["sence"];
   if (opts.profile !== "default") parts.push("--profile", shellQuote(opts.profile));
   return parts;
 }
@@ -182,15 +182,15 @@ export async function run(argv) {
     try {
       result = rollbackPolicy(policyPath, { snapshotDir, steps: opts.rollback });
     } catch (err) {
-      process.stderr.write(`[sense] Rollback failed: ${err.message}\n`);
+      process.stderr.write(`[sence] Rollback failed: ${err.message}\n`);
       process.exit(1);
     }
     if (result.error) {
-      process.stderr.write(`[sense] ${result.error}\n`);
+      process.stderr.write(`[sence] ${result.error}\n`);
       process.exit(1);
     }
-    process.stderr.write(`[sense] Rolled back policy to ${result.from}\n`);
-    process.stderr.write(`[sense] Policy written to ${policyPath}\n`);
+    process.stderr.write(`[sence] Rolled back policy to ${result.from}\n`);
+    process.stderr.write(`[sence] Policy written to ${policyPath}\n`);
     process.exit(0);
   }
 
@@ -210,7 +210,7 @@ export async function run(argv) {
   try {
     initPolicy = defaultPolicyForProfile(opts.profile);
   } catch (err) {
-    process.stderr.write(`[sense] ${err.message}\n`);
+    process.stderr.write(`[sence] ${err.message}\n`);
     process.exit(2);
   }
 
@@ -219,8 +219,8 @@ export async function run(argv) {
     currentPolicy = ensurePolicy(policyPath, { snapshotDir, defaultPolicy: initPolicy });
   } catch (err) {
     process.stderr.write(
-      `[sense] Fatal: ${policyPath} is corrupt — ${err.message}\n` +
-      `[sense] Fix or remove the file manually.\n`,
+      `[sence] Fatal: ${policyPath} is corrupt — ${err.message}\n` +
+      `[sence] Fix or remove the file manually.\n`,
     );
     process.exit(2);
   }
@@ -232,7 +232,7 @@ export async function run(argv) {
       const merged = mergePolicy(currentPolicy, patchData);
       const policyErrors = validatePolicy(merged);
       if (policyErrors.length > 0) {
-        process.stderr.write(`[sense] Refusing to apply unsafe policy:\n`);
+        process.stderr.write(`[sence] Refusing to apply unsafe policy:\n`);
         for (const e of policyErrors) {
           process.stderr.write(`  - ${e}\n`);
         }
@@ -240,9 +240,9 @@ export async function run(argv) {
       }
       writePolicy(policyPath, merged, { snapshotDir });
       currentPolicy = merged;
-      process.stderr.write(`[sense] Applied policy patch to ${policyPath}\n`);
+      process.stderr.write(`[sence] Applied policy patch to ${policyPath}\n`);
     } catch (err) {
-      process.stderr.write(`[sense] Failed to apply patch: ${err.message}\n`);
+      process.stderr.write(`[sence] Failed to apply patch: ${err.message}\n`);
       process.exit(2);
     }
   }
@@ -255,7 +255,7 @@ export async function run(argv) {
 
   if (execResult.spawnError) {
     process.stderr.write(
-      `[sense] Fatal: failed to launch sandbox — ${execResult.spawnError}\n`,
+      `[sence] Fatal: failed to launch sandbox — ${execResult.spawnError}\n`,
     );
     process.exit(127);
   }
@@ -276,7 +276,7 @@ export async function run(argv) {
   // Without TTY, stderr isolation is unavailable — skip suggester to avoid spoofed audit feeding policy suggestions
   const canSuggest = wantSuggest && hasTty();
   if (wantSuggest && !hasTty()) {
-    process.stderr.write("[sense] No TTY — skipping policy suggestions (audit data may be spoofed without stderr isolation).\n");
+    process.stderr.write("[sence] No TTY — skipping policy suggestions (audit data may be spoofed without stderr isolation).\n");
   }
 
   if (canSuggest) {
@@ -289,7 +289,7 @@ export async function run(argv) {
 
       // Write patch file (partial — will be merged on apply)
       if (rec.policyDiff) {
-        const tmpDir = mkdtempSync(join(tmpdir(), "sense-"));
+        const tmpDir = mkdtempSync(join(tmpdir(), "sence-"));
         const patchFile = join(tmpDir, "policy.json");
         writeFileSync(patchFile, JSON.stringify(rec.proposedPolicy, null, 2) + "\n");
         rec.patchFile = patchFile;
@@ -307,7 +307,7 @@ export async function run(argv) {
 
   if (showReport) {
     if (!hasTty() && hasDenials) {
-      process.stderr.write("[sense] Warning: no TTY — audit data is unverified (stderr isolation not available).\n");
+      process.stderr.write("[sence] Warning: no TTY — audit data is unverified (stderr isolation not available).\n");
     }
 
     const output =

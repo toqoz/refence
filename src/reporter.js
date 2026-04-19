@@ -1,9 +1,9 @@
 export function formatText(exec, audit, rec) {
   const lines = [];
 
-  lines.push(`[sense] command: ${exec.command.join(" ")}`);
-  lines.push(`[sense] profile: ${exec.profile}`);
-  lines.push(`[sense] exit: ${exec.exitCode}`);
+  lines.push(`[sence] command: ${exec.command.join(" ")}`);
+  lines.push(`[sence] profile: ${exec.profile}`);
+  lines.push(`[sence] exit: ${exec.exitCode}`);
   lines.push("");
 
   if (audit.deniedNetwork.length > 0 || audit.deniedFiles.length > 0) {

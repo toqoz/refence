@@ -71,13 +71,13 @@ function runInteractiveSuggester({ currentPolicy, auditSummary, screenContent, o
 
 export async function runInteractiveMode({ command, policyPath, snapshotDir, profile, suggest = "auto", model }) {
   if (!isInsideTmux()) {
-    process.stderr.write("[sense] --interactive requires tmux.\n");
+    process.stderr.write("[sence] --interactive requires tmux.\n");
     process.exit(2);
   }
 
   const paneId = currentPane();
   if (!paneId) {
-    process.stderr.write("[sense] Could not detect tmux pane.\n");
+    process.stderr.write("[sence] Could not detect tmux pane.\n");
     process.exit(2);
   }
 
@@ -86,8 +86,8 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
     currentPolicy = ensurePolicy(policyPath, { snapshotDir, defaultPolicy: defaultPolicyForProfile(profile) });
   } catch (err) {
     process.stderr.write(
-      `[sense] Fatal: ${policyPath} is corrupt — ${err.message}\n` +
-      `[sense] Fix or remove the file manually.\n`,
+      `[sence] Fatal: ${policyPath} is corrupt — ${err.message}\n` +
+      `[sence] Fix or remove the file manually.\n`,
     );
     process.exit(2);
   }
@@ -108,12 +108,12 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
   const auditSummary = audit({ exitCode, monitorLog });
 
   if (suggest === "never") {
-    process.stderr.write(`[sense] ${denials.length} denial(s) detected. Skipping suggestions (--suggest never).\n`);
+    process.stderr.write(`[sence] ${denials.length} denial(s) detected. Skipping suggestions (--suggest never).\n`);
     process.exit(exitCode);
   }
 
   // Suggest
-  process.stderr.write("[sense] Analyzing sandbox violations...\n");
+  process.stderr.write("[sence] Analyzing sandbox violations...\n");
   const rec = runInteractiveSuggester({
     currentPolicy,
     auditSummary,
@@ -123,7 +123,7 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
   });
 
   if (rec.error || !rec.proposedPolicy) {
-    process.stderr.write(`[sense] Suggester error: ${rec.error || "no proposal"}\n`);
+    process.stderr.write(`[sence] Suggester error: ${rec.error || "no proposal"}\n`);
     process.exit(exitCode);
   }
 
@@ -132,13 +132,13 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
 
   const policyDiff = diffPolicy(currentPolicy, mergedPolicy);
   if (!policyDiff) {
-    process.stderr.write("[sense] No policy changes suggested.\n");
+    process.stderr.write("[sence] No policy changes suggested.\n");
     process.exit(exitCode);
   }
 
   const errors = validatePolicy(mergedPolicy);
   if (errors.length > 0) {
-    process.stderr.write("[sense] Refusing unsafe policy:\n");
+    process.stderr.write("[sence] Refusing unsafe policy:\n");
     for (const e of errors) process.stderr.write(`  - ${e}\n`);
     process.exit(exitCode);
   }
@@ -153,15 +153,15 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
 
   if (policyAccepted) {
     writePolicy(policyPath, mergedPolicy, { snapshotDir });
-    process.stderr.write(`[sense] Policy updated: ${policyPath}\n`);
+    process.stderr.write(`[sence] Policy updated: ${policyPath}\n`);
   } else {
-    process.stderr.write("[sense] Policy not changed.\n");
+    process.stderr.write("[sence] Policy not changed.\n");
   }
 
   // Step 2: Show resume command and prefill in the pane
   // NOTE: The resume command is LLM-generated. Review before executing.
   if (rec.resumeCommand) {
-    const resumeCmd = `sense --interactive -- ${rec.resumeCommand}`;
+    const resumeCmd = `sence --interactive -- ${rec.resumeCommand}`;
     process.stderr.write(`\nSuggested resume command (review before running):\n  ${resumeCmd}\n`);
     prefillInput(paneId, resumeCmd);
   }
@@ -245,7 +245,7 @@ async function askPolicyApply({ auditSummary, explanation, policyDiff, paneId })
   const content = lines.join("\n");
 
   if (supportsPopup()) {
-    const tmpDir = mkdtempSync(join(tmpdir(), "sense-review-"));
+    const tmpDir = mkdtempSync(join(tmpdir(), "sence-review-"));
     const reviewFile = join(tmpDir, "review.txt");
     const scriptFile = join(tmpDir, "review.sh");
     const resultFile = join(tmpDir, "result");

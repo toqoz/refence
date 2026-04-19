@@ -5,10 +5,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const BIN = join(__dirname, "..", "bin", "sense");
+const BIN = join(__dirname, "..", "bin", "sence");
 const MOCK_AGENT = join(__dirname, "fixtures", "mock-agent.js");
 
-const SESSION = `sense-test-${process.pid}`;
+const SESSION = `sence-test-${process.pid}`;
 
 function tmux(...args) {
   const result = spawnSync("tmux", args, { encoding: "utf-8", timeout: 10_000 });
@@ -109,7 +109,7 @@ function waitForShell(timeoutMs = 10_000) {
   sleep(500);
 }
 
-describe("interactive: sense monitors denial and interrupts mock agent", { skip: (!hasTmux() || !hasFence()) && "tmux or fence not available" }, () => {
+describe("interactive: sence monitors denial and interrupts mock agent", { skip: (!hasTmux() || !hasFence()) && "tmux or fence not available" }, () => {
   before(() => {
     createSession();
     waitForShell();
@@ -125,8 +125,8 @@ describe("interactive: sense monitors denial and interrupts mock agent", { skip:
 
     assert.ok(
       content.includes("interrupted by user") ||
-        content.includes("[sense]"),
-      `Expected agent interruption or sense output, got:\n${content.slice(-500)}`,
+        content.includes("[sence]"),
+      `Expected agent interruption or sence output, got:\n${content.slice(-500)}`,
     );
   });
 

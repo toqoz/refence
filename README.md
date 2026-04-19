@@ -1,13 +1,13 @@
-# sense
+# sence
 
 A thin fence wrapper - suggests policy refinements.
 
 ## Synopsis
 
-    sense <command> [args...]
-    sense --interactive -- <agent-command...>
-    sense --patch <file> -- <command> [args...]
-    sense --rollback [STEP]
+    sence <command> [args...]
+    sence --interactive -- <agent-command...>
+    sence --patch <file> -- <command> [args...]
+    sence --rollback [STEP]
 
 ## Requirements
 
@@ -18,11 +18,11 @@ A thin fence wrapper - suggests policy refinements.
 
 ## Install
 
-    npm install -g @toqoz/sense
+    npm install -g @toqoz/sence
 
 ## Description
 
-sense wraps any command with `fence(1)`, monitors sandbox violations,
+sence wraps any command with `fence(1)`, monitors sandbox violations,
 and uses an LLM to suggest minimal policy changes as a patch file.
 
 The default profile starts with an empty policy. Use
@@ -33,31 +33,31 @@ The default profile starts with an empty policy. Use
 
 Run a command:
 
-    $ sense npm install
-    [sense] exit: 1
+    $ sence npm install
+    [sence] exit: 1
     Audit summary:
       - denied network: registry.npmjs.org:443
     Recommendation: Allow registry.npmjs.org for npm install.
     Proposed policy diff:
       ...
     To apply and re-run:
-      sense --patch /tmp/sense-xxxxx/policy.json -- npm install
+      sence --patch /tmp/sence-xxxxx/policy.json -- npm install
 
 Apply the suggestion:
 
-    $ sense --patch /tmp/sense-xxxxx/policy.json -- npm install
+    $ sence --patch /tmp/sence-xxxxx/policy.json -- npm install
 
 Undo it:
 
-    $ sense --rollback
+    $ sence --rollback
 
 ### Interactive mode
 
 For coding agents that run interactively (Claude Code, Codex, etc.),
-use `--interactive`. sense monitors sandbox violations in real-time
+use `--interactive`. sence monitors sandbox violations in real-time
 and interrupts the agent when access is denied:
 
-    $ sense --interactive -- claude
+    $ sence --interactive -- claude
 
 When a denial is detected:
 
@@ -73,8 +73,8 @@ When a denial is detected:
 Use `--profile <template>:<name>` to start a profile from a fence
 built-in template:
 
-    $ sense --profile code:npm-i npm install
-    $ sense --profile code:build npm run build
+    $ sence --profile code:npm-i npm install
+    $ sence --profile code:build npm run build
 
 On first run, `code:npm-i` is initialized with `{ "extends": "code" }`.
 It then behaves like any normal profile — patches, rollbacks, and
@@ -105,8 +105,8 @@ Available fence templates can be listed with:
 
 ## Policy
 
-Policies live in `$XDG_CONFIG_HOME/sense/<profile>/fence.json`.
-Snapshots are kept in `$XDG_DATA_HOME/sense/<profile>/snapshots/`.
+Policies live in `$XDG_CONFIG_HOME/sence/<profile>/fence.json`.
+Snapshots are kept in `$XDG_DATA_HOME/sence/<profile>/snapshots/`.
 
 The default profile (`default:default`) starts with an empty policy
 `{}`. Use `--profile <template>:<name>` to start from a fence template.
@@ -119,7 +119,7 @@ rollback to the same step always reaches the same state.
 
 ## Known limitations
 
-- **TTY-dependent features**: with a TTY, sense passes an extra
+- **TTY-dependent features**: with a TTY, sence passes an extra
   inherited fd to isolate fence monitor output from agent stderr.
   Without a TTY (e.g. CI), this isolation is unavailable — policy
   suggestions are disabled and audit output is marked as unverified,

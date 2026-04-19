@@ -25,11 +25,11 @@ export function defaultPolicyForProfile(profile) {
 }
 
 export function resolvePolicyPath({ configDir, profile = "default" }) {
-  return join(configDir, "sense", profile, "fence.json");
+  return join(configDir, "sence", profile, "fence.json");
 }
 
 export function resolveSnapshotDir({ dataDir, profile = "default" }) {
-  return join(dataDir, "sense", profile, "snapshots");
+  return join(dataDir, "sence", profile, "snapshots");
 }
 
 export function readPolicy(path) {

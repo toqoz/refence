@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Mock interactive agent for testing sense --interactive
+// Mock interactive agent for testing sence --interactive
 // - Reads stdin (like an interactive TUI)
 // - Attempts network access after a delay (will be denied by fence)
 // - Responds to ESC (0x1b) by printing a message and exiting
