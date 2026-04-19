@@ -1,14 +1,9 @@
 import { spawnSync } from "node:child_process";
 import { openSync, closeSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const REFENCE_BIN = join(__dirname, "..", "bin", "refence");
 
 const FENCE_LINE_RE = /^\[fence[:\w]*\]/;
 
-export function buildFenceArgs({ command, settingsPath, template, useProxy = false }) {
+export function buildFenceArgs({ command, settingsPath, template, isolateStderr = false }) {
   const args = ["fence", "-m"];
   if (settingsPath) {
     args.push("--settings", settingsPath);
@@ -16,10 +11,11 @@ export function buildFenceArgs({ command, settingsPath, template, useProxy = fal
   if (template) {
     args.push("--template", template);
   }
-  if (useProxy) {
-    // Wrap command with refence --proxy so agent I/O goes to /dev/tty
-    // and fence stderr pipe contains only monitor output
-    args.push("--", "node", REFENCE_BIN, "--proxy", "--", ...command);
+  if (isolateStderr) {
+    // Restore child stderr from inherited fd 3 (the real tty), then
+    // close fd 3 so the child doesn't leak it. Fence monitor output
+    // stays on fd 2 (a pipe the caller reads).
+    args.push("--", "sh", "-c", 'exec 2>&3 3>&-; exec "$@"', "sh", ...command);
   } else {
     args.push("--", ...command);
   }
@@ -65,13 +61,17 @@ export function hasTty() {
 }
 
 export function execute({ command, cwd, profile, settingsPath, template }) {
-  const useTtyProxy = hasTty();
-  const args = buildFenceArgs({ command, settingsPath, template, useProxy: useTtyProxy });
+  const ttyAvailable = hasTty();
+  const args = buildFenceArgs({ command, settingsPath, template, isolateStderr: ttyAvailable });
   const startedAt = new Date().toISOString();
+
+  // fd 3 = real tty (stderr) so the child can restore its stderr there
+  const stdio = ["inherit", "inherit", "pipe"];
+  if (ttyAvailable) stdio.push(process.stderr.fd);
 
   const result = spawnSync(args[0], args.slice(1), {
     cwd,
-    stdio: ["inherit", "inherit", "pipe"],
+    stdio,
     maxBuffer: 10 * 1024 * 1024,
   });
 

@@ -91,7 +91,7 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
     );
     process.exit(2);
   }
-  const fenceArgs = buildFenceArgs({ command, settingsPath: policyPath, useProxy: true });
+  const fenceArgs = buildFenceArgs({ command, settingsPath: policyPath, isolateStderr: true });
 
   const { exitCode, denials } = await runAndMonitor({ fenceArgs, paneId });
 
@@ -171,7 +171,7 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
 function runAndMonitor({ fenceArgs, paneId }) {
   return new Promise((resolve) => {
     const child = spawn(fenceArgs[0], fenceArgs.slice(1), {
-      stdio: ["inherit", "inherit", "pipe"],
+      stdio: ["inherit", "inherit", "pipe", process.stderr.fd],
     });
 
     const denials = [];

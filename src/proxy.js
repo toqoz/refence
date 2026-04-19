@@ -4,7 +4,6 @@
 // for monitor-only output.
 
 import { spawn } from "node:child_process";
-import { openSync } from "node:fs";
 
 export function runProxy(command) {
   if (command.length === 0) {
@@ -12,16 +11,11 @@ export function runProxy(command) {
     process.exit(2);
   }
 
-  let ttyFd;
-  try {
-    ttyFd = openSync("/dev/tty", "r+");
-  } catch (err) {
-    process.stderr.write(`[refence proxy] Cannot open /dev/tty: ${err.message}\n`);
-    process.exit(2);
-  }
-
-  const child = spawn(command[0], command.slice(1), {
-    stdio: [ttyFd, ttyFd, ttyFd],
+  // Redirect only stderr to /dev/tty via shell exec so the child
+  // process sees a normal TTY fd on stderr (not a dup'd fd from
+  // Node.js openSync, which breaks Bun's kqueue-based TTY init).
+  const child = spawn("/bin/sh", ["-c", 'exec 2>/dev/tty; exec "$@"', "sh", ...command], {
+    stdio: "inherit",
   });
 
   // Forward signals to child
