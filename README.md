@@ -1,6 +1,6 @@
 # refence
 
-Run commands in a sandbox. Audit what got denied. Refine the policy.
+A self-refining sandbox fence.
 
 ## Synopsis
 
