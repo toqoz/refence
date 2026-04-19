@@ -9,12 +9,16 @@ A self-refining sandbox fence.
     refence --patch <file> -- <command> [args...]
     refence --rollback [STEP]
 
+## Requirements
+
+- Node.js >= 20
+- [`fence(1)`](https://github.com/Use-Tusk/fence) — sandbox runtime
+- [`codex(1)`](https://github.com/openai/codex) — LLM backend for policy suggestions
+- `tmux(1)` >= 3.2 (only for `--interactive` mode)
+
 ## Install
 
     npm install -g refence
-
-Prerequisites: `fence(1)`, `codex(1)`, Node.js >= 20.
-For `--interactive`: `tmux(1)` >= 3.2.
 
 ## Description
 
