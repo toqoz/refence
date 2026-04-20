@@ -107,6 +107,15 @@ Available fence templates can be listed with:
 
     $ fence --list-templates
 
+sence ships a snapshot of the allowed fence templates under
+`docs/fence-templates/` so the suggester can see exactly what the
+current `extends` baseline already provides and propose minimal
+additions on top. sence refuses any patch or LLM suggestion that
+would rewrite `extends`. Refresh the snapshots after a fence upgrade
+with:
+
+    $ bin/refresh-fence-templates.sh
+
 ## Options
 
     --interactive         interactive agent mode (real-time denial monitoring)

@@ -18,6 +18,7 @@ import {
   validatePolicy,
   resolveProfileName,
   defaultPolicyForProfile,
+  assertExtendsImmutable,
 } from "../src/policy.js";
 
 describe("resolvePolicyPath", () => {
@@ -328,6 +329,46 @@ describe("validatePolicy", () => {
       const errors = validatePolicy({ filesystem: { allowRead: [p] } });
       assert.ok(errors.length > 0, `should reject: ${p}`);
     }
+  });
+});
+
+describe("assertExtendsImmutable", () => {
+  it("passes when patch omits extends", () => {
+    assert.doesNotThrow(() =>
+      assertExtendsImmutable({ extends: "code" }, { network: { allowedDomains: ["a.com"] } }),
+    );
+  });
+
+  it("passes when patch repeats the same extends", () => {
+    assert.doesNotThrow(() =>
+      assertExtendsImmutable({ extends: "code" }, { extends: "code" }),
+    );
+  });
+
+  it("passes when both sides have no extends", () => {
+    assert.doesNotThrow(() => assertExtendsImmutable({}, { network: {} }));
+    assert.doesNotThrow(() => assertExtendsImmutable(null, {}));
+  });
+
+  it("rejects switching to a different template", () => {
+    assert.throws(
+      () => assertExtendsImmutable({ extends: "code" }, { extends: "code-strict" }),
+      /changes "extends" from "code" to "code-strict"/,
+    );
+  });
+
+  it("rejects adding extends when current has none", () => {
+    assert.throws(
+      () => assertExtendsImmutable({}, { extends: "code" }),
+      /changes "extends" from \(none\) to "code"/,
+    );
+  });
+
+  it("rejects removing extends via explicit null", () => {
+    assert.throws(
+      () => assertExtendsImmutable({ extends: "code" }, { extends: null }),
+      /changes "extends" from "code" to \(none\)/,
+    );
   });
 });
 

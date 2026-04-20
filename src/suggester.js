@@ -1,20 +1,52 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { stripEmpty } from "./policy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHEATSHEET = readFileSync(join(__dirname, "..", "docs", "fence-cheatsheet.md"), "utf-8");
+const TEMPLATE_DIR = join(__dirname, "..", "docs", "fence-templates");
 const SCHEMA_PATH = join(__dirname, "..", "docs", "suggester-schema.json");
 
 const DEFAULT_MODEL = "gpt-5.4-mini";
 
+// Read the snapshot of the fence builtin template the current policy extends.
+// Returns a string ready for prompt injection, or a short note if no extends
+// is set. Snapshots live under docs/fence-templates/ and are refreshed via
+// bin/refresh-fence-templates.sh.
+export function loadExtendsTemplate(currentPolicy) {
+  const name = currentPolicy?.extends;
+  if (!name) return null;
+  const path = join(TEMPLATE_DIR, `${name}.json`);
+  if (!existsSync(path)) return null;
+  return { name, json: readFileSync(path, "utf-8") };
+}
+
 export function buildPrompt({ currentPolicy, auditSummary }) {
+  const tmpl = loadExtendsTemplate(currentPolicy);
+  const templateSection = tmpl
+    ? `## Baseline from "extends": "${tmpl.name}"
+
+fence(1) merges this template under the current fence.json. Arrays from the
+template are appended to the child's arrays at runtime. Treat every entry
+below as already granted — do NOT duplicate them into the child policy.
+
+\`\`\`json
+${tmpl.json.trim()}
+\`\`\`
+`
+    : `## Baseline
+
+The current fence.json does not extend a template. It starts from an empty
+policy; everything must be expressed in the child.
+`;
+
   return `Recommend a fence.json policy change based on the audit below.
 
 ${CHEATSHEET}
 
+${templateSection}
 ## Current fence.json
 
 ${JSON.stringify(currentPolicy, null, 2)}
@@ -26,9 +58,16 @@ ${JSON.stringify(auditSummary, null, 2)}
 ## Rules
 
 - Never allow credential paths listed in the Reference above.
+- Never change "extends". If the current fence.json has one, keep the exact
+  same value (or omit the field). Do not propose switching templates, even
+  if a different template would match better — add the missing allowances
+  to the current extends instead.
+- Do not duplicate entries already present in the baseline template above;
+  fence appends template arrays to the child's at runtime.
 - Only include fields you are changing. Omit unchanged sections (set to null).
+- When you do include an array, include the child's existing entries in it
+  so they survive — sence replaces arrays on patch apply.
 - Make the smallest safe change from the current fence.json.
-- Always include "extends" if present.
 - Prefer narrow wildcards (e.g. "*.npmjs.org") over broad ones.
 
 ## Output

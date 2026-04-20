@@ -3,7 +3,7 @@ import { execute } from "./executor.js";
 import { audit } from "./auditor.js";
 import { runSuggester } from "./suggester.js";
 import { formatText, formatJson } from "./reporter.js";
-import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, defaultPolicyForProfile } from "./policy.js";
+import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, defaultPolicyForProfile, assertExtendsImmutable } from "./policy.js";
 import { runInteractiveMode } from "./modes/interactive.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -246,6 +246,7 @@ export async function run(argv) {
     try {
       const patchData = JSON.parse(readFileSync(opts.patch, "utf-8"));
       const normalizedPatch = stripNulls(patchData) ?? {};
+      assertExtendsImmutable(currentPolicy, normalizedPatch);
       const merged = mergePolicy(currentPolicy, normalizedPatch);
       const policyErrors = validatePolicy(merged);
       if (policyErrors.length > 0) {
@@ -293,6 +294,14 @@ export async function run(argv) {
 
   if (wantSuggest) {
     rec = runSuggester({ currentPolicy, auditSummary, model: opts.model });
+
+    if (rec.proposedPolicy) {
+      try {
+        assertExtendsImmutable(currentPolicy, rec.proposedPolicy);
+      } catch (err) {
+        rec = { autoApplied: false, error: `Rejected suggestion: ${err.message}` };
+      }
+    }
 
     if (rec.proposedPolicy) {
       // Diff against the merged result so the displayed diff matches what --patch actually applies

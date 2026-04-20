@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 
 import { buildFenceArgs, teeMonitorLog } from "../executor.js";
 import { audit } from "../auditor.js";
-import { callCodex } from "../suggester.js";
-import { ensurePolicy, writePolicy, diffPolicy, validatePolicy, mergePolicy, defaultPolicyForProfile } from "../policy.js";
+import { callCodex, loadExtendsTemplate } from "../suggester.js";
+import { ensurePolicy, writePolicy, diffPolicy, validatePolicy, mergePolicy, defaultPolicyForProfile, assertExtendsImmutable } from "../policy.js";
 import { isInsideTmux, sendEscape, capturePaneContent, displayPopup, supportsPopup, currentPane, prefillInput } from "../tmux.js";
 import { shellQuote } from "../cli.js";
 
@@ -34,6 +34,24 @@ function logEvent(logPath, msg) {
 }
 
 function buildInteractivePrompt({ currentPolicy, auditSummary, screenContent, originalCommand }) {
+  const tmpl = loadExtendsTemplate(currentPolicy);
+  const templateSection = tmpl
+    ? `## Baseline from "extends": "${tmpl.name}"
+
+fence(1) merges this template under the current fence.json. Arrays from the
+template are appended to the child's arrays at runtime. Treat every entry
+below as already granted — do NOT duplicate them into the child policy.
+
+\`\`\`json
+${tmpl.json.trim()}
+\`\`\`
+`
+    : `## Baseline
+
+The current fence.json does not extend a template; it starts from an empty
+policy.
+`;
+
   return `## Task
 
 Propose the minimal safe fence.json policy change, and if possible, the exact command to resume the agent session.
@@ -41,9 +59,14 @@ Propose the minimal safe fence.json policy change, and if possible, the exact co
 ## Rules
 
 - Never allow credential paths listed in the Reference below.
+- Never change "extends". If the current fence.json has one, keep the exact
+  same value (or omit the field). Do not propose switching templates, even
+  if a different template would match better — add the missing allowances
+  to the current extends instead.
+- Do not duplicate entries already present in the baseline template above;
+  fence appends template arrays to the child's at runtime.
 - Return the complete resulting fence.json in proposedPolicy, not a partial diff.
 - Make the smallest safe change from the current fence.json.
-- Keep "extends" if present.
 - Prefer narrow domain wildcards (e.g. "*.npmjs.org") over broad ones.
 - Set resumeCommand to null if you cannot find the session ID in the screen content.
 
@@ -51,6 +74,7 @@ Propose the minimal safe fence.json policy change, and if possible, the exact co
 
 ${CHEATSHEET}
 
+${templateSection}
 ## Original command
 
 ${JSON.stringify(originalCommand)}
@@ -136,6 +160,13 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
 
   if (rec.error || !rec.proposedPolicy) {
     logEvent(logPath, `[sence] Suggester error: ${rec.error || "no proposal"}`);
+    process.exit(exitCode);
+  }
+
+  try {
+    assertExtendsImmutable(currentPolicy, rec.proposedPolicy);
+  } catch (err) {
+    logEvent(logPath, `[sence] Rejected suggestion: ${err.message}`);
     process.exit(exitCode);
   }
 

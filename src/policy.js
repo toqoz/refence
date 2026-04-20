@@ -112,6 +112,26 @@ const DANGEROUS_GLOB_PATTERNS = [
 
 const ALLOWED_EXTENDS = ["code", "code-strict", "code-relaxed", "local-dev-server"];
 
+// Reject a patch that would change the current policy's `extends`.
+// Callers must strip leftover `extends: current.extends` from the patch
+// before merging — a no-op extends is not an error, but a *different*
+// extends is a structural rewrite we never allow the LLM (or a user
+// --patch) to perform implicitly. Rationale: changing extends silently
+// swaps the entire baseline of allowed domains / denied paths / commands
+// and inverts the "smallest safe change" invariant.
+export function assertExtendsImmutable(current, patch) {
+  if (!patch || typeof patch !== "object" || !Object.hasOwn(patch, "extends")) return;
+  const proposed = patch.extends;
+  const currentExtends = current?.extends ?? null;
+  if (proposed === currentExtends) return;
+  const from = currentExtends === null ? "(none)" : JSON.stringify(currentExtends);
+  const to = proposed === null ? "(none)" : JSON.stringify(proposed);
+  throw new Error(
+    `patch changes "extends" from ${from} to ${to}; sence never rewrites the template baseline — ` +
+    `add specific allowances to the current extends instead.`,
+  );
+}
+
 export function validatePolicy(policy) {
   const errors = [];
 
