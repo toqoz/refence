@@ -147,6 +147,21 @@ export function validatePolicy(policy) {
   return errors;
 }
 
+// Recursively drop null values, empty arrays, and resulting empty objects.
+// Used to normalize patch input before merging so null/empty fields don't
+// leak into fence.json. The LLM suggester sets unchanged sections to null
+// per its prompt contract; user-authored --patch files may do the same.
+export function stripEmpty(obj) {
+  if (obj == null || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.length === 0 ? undefined : obj;
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    const stripped = stripEmpty(v);
+    if (stripped !== undefined && stripped !== null) out[k] = stripped;
+  }
+  return Object.keys(out).length === 0 ? undefined : out;
+}
+
 // Deep-merge a partial patch into a base policy.
 // Arrays and primitives are replaced; plain objects are recursed.
 export function mergePolicy(base, patch) {

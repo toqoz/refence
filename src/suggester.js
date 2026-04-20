@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { stripEmpty } from "./policy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHEATSHEET = readFileSync(join(__dirname, "..", "docs", "fence-cheatsheet.md"), "utf-8");
@@ -35,22 +36,6 @@ ${JSON.stringify(auditSummary, null, 2)}
 Reply with ONLY this JSON, nothing else:
 
 {"proposedPolicy":{...},"explanation":"one short sentence"}`;
-}
-
-// Strip null values, empty arrays, and resulting empty objects from a policy so
-// fence.json only contains fields the LLM actually changed.  The output schema
-// uses nullable types for optional fields (OpenAI structured output requires
-// every property to be listed in "required"), and the prompt tells the LLM to
-// set unchanged sections to null.
-function stripEmpty(obj) {
-  if (obj == null || typeof obj !== "object") return obj;
-  if (Array.isArray(obj)) return obj.length === 0 ? undefined : obj;
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    const stripped = stripEmpty(v);
-    if (stripped !== undefined && stripped !== null) out[k] = stripped;
-  }
-  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 // Extract the first top-level JSON object from a string by brace-counting.
