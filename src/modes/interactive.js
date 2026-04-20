@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 import { buildFenceArgs, teeMonitorLog } from "../executor.js";
-import { audit } from "../auditor.js";
+import { audit, isSignificantDenial } from "../auditor.js";
 import { callCodex, loadExtendsTemplate } from "../suggester.js";
 import { ensurePolicy, writePolicy, diffPolicy, validatePolicy, mergePolicy, defaultPolicyForProfile, additionsToPatch, assessAddition } from "../policy.js";
 import { isInsideTmux, sendEscape, capturePaneContent, displayPopup, supportsPopup, currentPane, prefillInput } from "../tmux.js";
@@ -249,7 +249,7 @@ function runAndMonitor({ fenceArgs, paneId, logPath }) {
     process.on("SIGTERM", cleanup);
 
     teeMonitorLog(child.stdio[3], (line) => {
-      if (!line.includes("✗")) return;
+      if (!isSignificantDenial(line)) return;
       denials.push(line);
 
       if (interrupted) return;

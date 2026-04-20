@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { audit } from "../src/auditor.js";
+import { audit, isSignificantDenial } from "../src/auditor.js";
 
 describe("audit", () => {
   it("returns clean summary when no monitor output", () => {
@@ -100,5 +100,42 @@ describe("audit", () => {
     const result = audit({ exitCode: 1, monitorLog: log });
     assert.equal(result.deniedNetwork.length, 1);
     assert.equal(result.deniedFiles.length, 0);
+  });
+});
+
+describe("isSignificantDenial", () => {
+  it("returns false for non-denial lines", () => {
+    assert.equal(isSignificantDenial("[fence] Command: npm install"), false);
+    assert.equal(isSignificantDenial(""), false);
+  });
+
+  it("returns true for network CONNECT denials", () => {
+    const line =
+      "[fence:http] 10:00:00 ✗ CONNECT 403 example.com https://example.com:443 (0s)";
+    assert.equal(isSignificantDenial(line), true);
+  });
+
+  it("returns true for file read/write denials", () => {
+    assert.equal(
+      isSignificantDenial(
+        "[fence:logstream] 10:00:01 ✗ file-read-data /Users/foo/.ssh/config (node:1234)",
+      ),
+      true,
+    );
+    assert.equal(
+      isSignificantDenial(
+        "[fence:logstream] 10:00:01 ✗ file-write-create /tmp/out (touch:1)",
+      ),
+      true,
+    );
+  });
+
+  it("skips network-bind — editors like nvim open a local control socket on startup", () => {
+    // Ctrl-G in claude → nvim binds /private/tmp/fence/nvim.<user>/.../nvim.<pid>.0.
+    // Without this filter, sence would ESC+kill the agent (and nvim) the moment
+    // the editor is launched, leaving the user with a blank/unresponsive TUI.
+    const line =
+      "[fence:logstream] 22:37:31 ✗ network-bind /private/tmp/fence/nvim.toqoz/eHOjue/nvim.93905.0 (nvim:93905)";
+    assert.equal(isSignificantDenial(line), false);
   });
 });

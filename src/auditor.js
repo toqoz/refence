@@ -7,6 +7,23 @@ const FILE_DENIAL_RE =
 const NETWORK_DENIAL_RE =
   /^\[fence:http\]\s+\S+\s+✗\s+CONNECT\s+403\s+(\S+)\s+https?:\/\/\S+:(\d+)/;
 
+// Denials that should NOT trigger ESC+kill of the wrapped agent. Editors
+// such as nvim create a local control socket on startup (e.g. via Ctrl-G in
+// claude, nvim binds /private/tmp/fence/nvim.<user>/.../nvim.<pid>.0).
+// Without this filter, sence would interrupt the agent and kill the editor
+// the moment it opens.
+const BENIGN_DENIAL_ACTIONS = new Set([
+  "network-bind",
+]);
+
+export function isSignificantDenial(line) {
+  if (!line.includes("✗")) return false;
+  if (line.startsWith("[fence:http]")) return true;
+  const m = line.match(FILE_DENIAL_RE);
+  if (!m) return true; // unknown shape — be conservative
+  return !BENIGN_DENIAL_ACTIONS.has(m[1]);
+}
+
 function classifyFileSeverity(path) {
   for (const pattern of CREDENTIAL_PATTERNS) {
     if (pattern.test(path)) return "high";
