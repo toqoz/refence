@@ -167,6 +167,32 @@ rollback to the same step always reaches the same state.
   Without it, `--suggest auto` falls back to showing raw audit
   summaries without proposed diffs.
 
+## File layout
+
+sence writes in three places:
+
+    $XDG_CONFIG_HOME/sence/<profile>/fence.json     persistent policy
+    $XDG_STATE_HOME/sence/<key>/
+      ├── monitor.log                               fence audit log (--interactive)
+      └── snapshots/<timestamp>-<seq>.json          rollback points, newest first
+    $TMPDIR/sence-XXXXXX/policy.json                ephemeral; pass to --patch
+
+XDG defaults when unset: `$XDG_CONFIG_HOME` → `~/.config`,
+`$XDG_STATE_HOME` → `~/.local/state`.
+
+`<profile>` and `<key>` are derived from the `--profile` argument:
+
+    --profile form                    <profile> path segment        <key>
+    <name>                            default:<name>                default:<name>
+    <template>:<name>                 <template>:<name>             <template>:<name>
+    <template>:<name>:<config-dir>    (fence.json moves to          <template>-<name>-<abs-config-dir>
+                                       <config-dir>/fence.json,      (slashes replaced with `-`)
+                                       flat — no sence/ prefix)
+
+With a 3-component profile, `fence.json` lives at `<config-dir>/fence.json`
+(workspace-local). Runtime state still lives under `$XDG_STATE_HOME` and is
+keyed so two workspaces sharing the same `<template>:<name>` never collide.
+
 ## License
 
 MIT
