@@ -20,6 +20,23 @@ A thin fence wrapper - suggests policy refinements.
 
     npm install -g @toqoz/sence
 
+Or use the flake (`packages.default` exposes `sence`):
+
+    # one-shot
+    nix run github:toqoz/sence -- npm install
+
+As a flake input (e.g. for home-manager):
+
+    {
+      inputs.sence.url = "github:toqoz/sence";
+      outputs = { self, nixpkgs, sence, ... }: {
+        # home.packages = [ sence.packages.${system}.default ];
+      };
+    }
+
+`fence(1)` and `codex(1)` are not packaged in nixpkgs and must be
+available on `PATH` separately. `tmux` is bundled into the wrapper.
+
 ## Description
 
 sence wraps any command with `fence(1)`, monitors sandbox violations,
