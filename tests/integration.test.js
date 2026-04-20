@@ -249,6 +249,33 @@ describe("integration: patch + rollback via tmux", { skip: !hasPrereqs() && "tmu
   });
 });
 
+describe("integration: suggest → patch → re-run loop", { skip: (!hasFence() || !hasCodex()) && "fence or codex not available", timeout: 60_000 }, () => {
+  it("applying the generated patch file makes the retry succeed", () => {
+    const tmp = mkdtempSync(join(TEST_TMP, "smoke-"));
+    try {
+      const configDir = join(tmp, "config");
+      const dataDir = join(tmp, "data");
+      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir };
+
+      const r1 = spawnSync("node", [BIN, "--", "curl", "-sf", "https://example.com"], {
+        encoding: "utf-8", env, timeout: 45_000,
+      });
+      assert.notEqual(r1.status, 0, "first run should fail due to network denial");
+      const match = r1.stderr.match(/--patch (\S+\/policy\.json)/);
+      assert.ok(match, `patch file hint not found in stderr:\n${r1.stderr.slice(-500)}`);
+      const patchFile = match[1];
+
+      const r2 = spawnSync("node", [BIN, "--suggest", "never", "--patch", patchFile, "--", "curl", "-sf", "https://example.com"], {
+        encoding: "utf-8", env, timeout: 20_000,
+      });
+      assert.equal(r2.status, 0, `retry should succeed. stderr:\n${r2.stderr.slice(-500)}`);
+      assert.ok(!r2.stderr.includes("denied network: example.com"), "example.com should no longer be denied");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("integration: --patch input normalization", { skip: !hasFence() && "fence not available" }, () => {
   it("strips null and empty fields before writing fence.json", () => {
     const tmp = mkdtempSync(join(TEST_TMP, "patch-null-"));
