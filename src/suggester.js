@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { stripEmpty } from "./policy.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const CHEATSHEET = readFileSync(join(__dirname, "..", "docs", "fence-cheatsheet.md"), "utf-8");
@@ -12,15 +11,21 @@ const SCHEMA_PATH = join(__dirname, "..", "docs", "suggester-schema.json");
 const DEFAULT_MODEL = "gpt-5.4-mini";
 
 // Read the snapshot of the fence builtin template the current policy extends.
-// Returns a string ready for prompt injection, or a short note if no extends
-// is set. Snapshots live under docs/fence-templates/ and are refreshed via
-// bin/refresh-fence-templates.sh.
+// Snapshots live under docs/fence-templates/ and are refreshed via
+// bin/refresh-fence-templates.sh. Returns { name, json, entries } or null.
 export function loadExtendsTemplate(currentPolicy) {
   const name = currentPolicy?.extends;
   if (!name) return null;
   const path = join(TEMPLATE_DIR, `${name}.json`);
   if (!existsSync(path)) return null;
-  return { name, json: readFileSync(path, "utf-8") };
+  const json = readFileSync(path, "utf-8");
+  let entries = null;
+  try {
+    entries = JSON.parse(json);
+  } catch {
+    entries = null;
+  }
+  return { name, json, entries };
 }
 
 export function buildPrompt({ currentPolicy, auditSummary }) {
@@ -28,9 +33,8 @@ export function buildPrompt({ currentPolicy, auditSummary }) {
   const templateSection = tmpl
     ? `## Baseline from "extends": "${tmpl.name}"
 
-fence(1) merges this template under the current fence.json. Arrays from the
-template are appended to the child's arrays at runtime. Treat every entry
-below as already granted — do NOT duplicate them into the child policy.
+fence(1) merges this template under the current fence.json at runtime. Treat
+every entry below as already granted — no need to propose them.
 
 \`\`\`json
 ${tmpl.json.trim()}
@@ -39,42 +43,52 @@ ${tmpl.json.trim()}
     : `## Baseline
 
 The current fence.json does not extend a template. It starts from an empty
-policy; everything must be expressed in the child.
+policy; every allowance must be proposed explicitly.
 `;
 
-  return `Recommend a fence.json policy change based on the audit below.
+  return `Propose a flat list of additions to the child fence.json so the audit below stops failing.
+
+You do NOT need to emit the full fence.json, diff existing arrays, or re-list
+entries that are already granted. sence will append your additions to the
+existing arrays, dedupe against the current policy and the baseline template,
+and reject any entry that violates the safety rules below.
 
 ${CHEATSHEET}
 
 ${templateSection}
-## Current fence.json
+## Current fence.json (child)
 
 ${JSON.stringify(currentPolicy, null, 2)}
 
-## Audit
+## Audit (one or more denials)
 
 ${JSON.stringify(auditSummary, null, 2)}
 
 ## Rules
 
-- Never allow credential paths listed in the Reference above.
-- Never change "extends". If the current fence.json has one, keep the exact
-  same value (or omit the field). Do not propose switching templates, even
-  if a different template would match better — add the missing allowances
-  to the current extends instead.
-- Do not duplicate entries already present in the baseline template above;
-  fence appends template arrays to the child's at runtime.
-- Only include fields you are changing. Omit unchanged sections (set to null).
-- When you do include an array, include the child's existing entries in it
-  so they survive — sence replaces arrays on patch apply.
-- Make the smallest safe change from the current fence.json.
-- Prefer narrow wildcards (e.g. "*.npmjs.org") over broad ones.
+- Cover EVERY denial in the audit. Each \`deniedFiles\` / \`deniedNetwork\`
+  entry should produce at least one addition that would unblock it, unless
+  you intentionally skip it for safety (noted in rationale).
+- Every addition must directly address a denial from the audit above.
+  Do NOT propose tightening (extra command.deny, network.deny, etc.) for
+  anything that was not denied — the user asked for the smallest change
+  to unblock the current run, not a hardening pass.
+- Prefer narrow wildcards ("*.npmjs.org") over broad ones ("*").
+- Never propose credential paths (~/.ssh, ~/.aws, ~/.gnupg, ~/.kube,
+  ~/.docker, ~/.netrc, ~/.git-credentials, etc.) under allowRead/allowWrite.
+  sence will block them — don't waste a slot.
+- Never propose broad home globs like ~/** or /Users/<user>/**.
+- Assign riskLevel per entry: "low" (narrow, non-sensitive), "medium"
+  (broader scope or side effects), "high" (near credentials / broad write).
+  sence applies its own static checks on top; riskLevel is informational.
+- Set relatedDenial to a short trace string identifying which denial this
+  addition unblocks (e.g. "net:registry.npmjs.org:443", "file:/Users/x/project read").
 
 ## Output
 
 Reply with ONLY this JSON, nothing else:
 
-{"proposedPolicy":{...},"explanation":"one short sentence"}`;
+{"proposedAdditions":[{"kind":"...","value":"...","riskLevel":"low|medium|high","rationale":"...","relatedDenial":"..."}],"explanation":"one short sentence"}`;
 }
 
 // Extract the first top-level JSON object from a string by brace-counting.
@@ -97,33 +111,42 @@ function extractFirstJson(str) {
   return null;
 }
 
+function finalizeParsed(parsed) {
+  if (!parsed || !Array.isArray(parsed.proposedAdditions)) return null;
+  return {
+    proposedAdditions: parsed.proposedAdditions,
+    explanation: typeof parsed.explanation === "string" ? parsed.explanation : "",
+    resumeCommand: Object.hasOwn(parsed, "resumeCommand") ? parsed.resumeCommand : undefined,
+    autoApplied: false,
+  };
+}
+
 export function parseRecommendation(output) {
   const base = { autoApplied: false };
 
-  // Try direct JSON parse
+  // Direct JSON parse
   try {
-    const parsed = JSON.parse(output.trim());
-    if (parsed.proposedPolicy) return { ...parsed, proposedPolicy: stripEmpty(parsed.proposedPolicy), ...base };
+    const finalized = finalizeParsed(JSON.parse(output.trim()));
+    if (finalized) return finalized;
   } catch {
     // fall through
   }
 
-  // Try extracting from ```json ... ``` block
+  // ```json ... ``` block
   const codeBlockMatch = output.match(/```(?:json)?\s*\n([\s\S]*?)\n\s*```/);
   if (codeBlockMatch) {
     try {
-      const parsed = JSON.parse(codeBlockMatch[1].trim());
-      if (parsed.proposedPolicy) return { ...parsed, proposedPolicy: stripEmpty(parsed.proposedPolicy), ...base };
+      const finalized = finalizeParsed(JSON.parse(codeBlockMatch[1].trim()));
+      if (finalized) return finalized;
     } catch {
       // fall through
     }
   }
 
-  // Try extracting the first complete JSON object (handles duplicated output from codex)
+  // First complete JSON object (handles codex duplicated output)
   const firstObj = extractFirstJson(output);
-  if (firstObj && firstObj.proposedPolicy) {
-    return { ...firstObj, proposedPolicy: stripEmpty(firstObj.proposedPolicy), ...base };
-  }
+  const finalized = finalizeParsed(firstObj);
+  if (finalized) return finalized;
 
   return { error: "Failed to parse recommendation from output", rawOutput: output, ...base };
 }

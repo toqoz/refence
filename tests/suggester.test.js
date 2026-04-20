@@ -26,13 +26,13 @@ describe("buildPrompt", () => {
     assert.ok(prompt.includes("network egress denied"));
   });
 
-  it("instructs to output JSON fence.json", () => {
+  it("instructs to output proposedAdditions", () => {
     const prompt = buildPrompt({
       currentPolicy: {},
       auditSummary: { status: "failed", deniedFiles: [], deniedNetwork: [], suspiciousActions: [], likelyFailureCauses: [] },
     });
-    assert.ok(prompt.includes("fence.json"));
-    assert.ok(prompt.includes("proposedPolicy"));
+    assert.ok(prompt.includes("proposedAdditions"));
+    assert.ok(prompt.includes("riskLevel"));
   });
 
   it("includes credential path restrictions", () => {
@@ -44,13 +44,13 @@ describe("buildPrompt", () => {
     assert.ok(prompt.includes(".ssh"));
   });
 
-  it("forbids changing extends and template switching", () => {
+  it("tells the LLM not to re-list existing entries", () => {
     const prompt = buildPrompt({
       currentPolicy: { extends: "code" },
       auditSummary: { status: "failed", deniedFiles: [], deniedNetwork: [], suspiciousActions: [], likelyFailureCauses: [] },
     });
-    assert.ok(/Never change "extends"/.test(prompt));
-    assert.ok(/Do not propose switching templates/.test(prompt));
+    assert.ok(/do NOT need to emit the full fence\.json/.test(prompt));
+    assert.ok(/re-list\s+entries/.test(prompt));
   });
 
   it("injects the baseline template snapshot when extends is set", () => {
@@ -62,7 +62,7 @@ describe("buildPrompt", () => {
     assert.ok(prompt.includes('"extends": "code"'));
     assert.ok(prompt.includes("registry.npmjs.org"));
     assert.ok(prompt.includes("git push"));
-    assert.ok(/do NOT duplicate them into the child policy/.test(prompt));
+    assert.ok(/already granted/i.test(prompt));
   });
 
   it("falls back to empty-baseline note when no extends", () => {
@@ -72,6 +72,20 @@ describe("buildPrompt", () => {
     });
     assert.ok(/does not extend a template/.test(prompt));
   });
+
+  it("tells the LLM to cover every denial", () => {
+    const prompt = buildPrompt({
+      currentPolicy: {},
+      auditSummary: {
+        status: "failed",
+        deniedFiles: [{ path: "/x", action: "file-read-data", severity: "low" }],
+        deniedNetwork: [{ host: "a.com", port: 443, severity: "medium" }],
+        suspiciousActions: [],
+        likelyFailureCauses: [],
+      },
+    });
+    assert.ok(/Cover EVERY denial/i.test(prompt));
+  });
 });
 
 describe("loadExtendsTemplate", () => {
@@ -80,12 +94,14 @@ describe("loadExtendsTemplate", () => {
     assert.equal(loadExtendsTemplate(null), null);
   });
 
-  it("returns the snapshot JSON for known templates", () => {
+  it("returns the snapshot JSON and parsed entries for known templates", () => {
     const tmpl = loadExtendsTemplate({ extends: "code" });
     assert.equal(tmpl.name, "code");
     assert.ok(tmpl.json.includes("registry.npmjs.org"));
     // Snapshot must parse as JSON so prompt injection stays valid.
     assert.doesNotThrow(() => JSON.parse(tmpl.json));
+    assert.ok(tmpl.entries);
+    assert.ok(tmpl.entries.network.allowedDomains.includes("registry.npmjs.org"));
   });
 
   it("returns null for an unknown template name", () => {
@@ -105,15 +121,18 @@ describe("loadExtendsTemplate", () => {
 });
 
 describe("parseRecommendation", () => {
-  it("parses valid JSON response with proposed policy", () => {
+  it("parses valid JSON response with proposedAdditions", () => {
     const output = JSON.stringify({
-      proposedPolicy: { network: { allowedDomains: ["registry.npmjs.org"] } },
+      proposedAdditions: [
+        { kind: "network.allow", value: "registry.npmjs.org", riskLevel: "low", rationale: "npm install needs it", relatedDenial: "net:registry.npmjs.org:443" },
+      ],
       explanation: "Allow npm registry access for dependency installation.",
     });
     const result = parseRecommendation(output);
-    assert.ok(result.proposedPolicy);
-    assert.deepEqual(result.proposedPolicy.network.allowedDomains, ["registry.npmjs.org"]);
-    assert.ok(result.explanation);
+    assert.ok(Array.isArray(result.proposedAdditions));
+    assert.equal(result.proposedAdditions.length, 1);
+    assert.equal(result.proposedAdditions[0].value, "registry.npmjs.org");
+    assert.equal(result.explanation, "Allow npm registry access for dependency installation.");
     assert.equal(result.autoApplied, false);
   });
 
@@ -122,12 +141,15 @@ describe("parseRecommendation", () => {
 
 \`\`\`json
 {
-  "proposedPolicy": { "network": { "allowedDomains": ["example.com"] } },
+  "proposedAdditions": [
+    { "kind": "network.allow", "value": "example.com", "riskLevel": "low", "rationale": "needed", "relatedDenial": null }
+  ],
   "explanation": "Allow example.com"
 }
 \`\`\``;
     const result = parseRecommendation(output);
-    assert.deepEqual(result.proposedPolicy.network.allowedDomains, ["example.com"]);
+    assert.equal(result.proposedAdditions[0].value, "example.com");
+    assert.equal(result.proposedAdditions[0].kind, "network.allow");
   });
 
   it("returns error result when output is not parseable", () => {
@@ -138,7 +160,7 @@ describe("parseRecommendation", () => {
 
   it("always sets autoApplied to false", () => {
     const output = JSON.stringify({
-      proposedPolicy: {},
+      proposedAdditions: [],
       explanation: "No changes needed.",
     });
     const result = parseRecommendation(output);
@@ -149,16 +171,26 @@ describe("parseRecommendation", () => {
     // codex sometimes concatenates the same structured output twice.
     // extractFirstJson handles this via brace-counting.
     const first = {
-      proposedPolicy: { network: { allowedDomains: ["first.example.com"] } },
+      proposedAdditions: [{ kind: "network.allow", value: "first.example.com", riskLevel: "low", rationale: "a", relatedDenial: null }],
       explanation: "first",
     };
     const second = {
-      proposedPolicy: { network: { allowedDomains: ["second.example.com"] } },
+      proposedAdditions: [{ kind: "network.allow", value: "second.example.com", riskLevel: "low", rationale: "b", relatedDenial: null }],
       explanation: "second",
     };
     const output = JSON.stringify(first) + JSON.stringify(second);
     const result = parseRecommendation(output);
-    assert.deepEqual(result.proposedPolicy.network.allowedDomains, ["first.example.com"]);
+    assert.equal(result.proposedAdditions[0].value, "first.example.com");
     assert.equal(result.explanation, "first");
+  });
+
+  it("preserves resumeCommand for interactive schema responses", () => {
+    const output = JSON.stringify({
+      proposedAdditions: [],
+      explanation: "none",
+      resumeCommand: "claude -c abc",
+    });
+    const result = parseRecommendation(output);
+    assert.equal(result.resumeCommand, "claude -c abc");
   });
 });

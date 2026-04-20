@@ -11,7 +11,6 @@ import {
   writePolicy,
   diffPolicy,
   mergePolicy,
-  stripEmpty,
   stripNulls,
   listSnapshots,
   rollbackPolicy,
@@ -19,6 +18,9 @@ import {
   resolveProfileName,
   defaultPolicyForProfile,
   assertExtendsImmutable,
+  additionsToPatch,
+  assessAddition,
+  normalizeAdditionValue,
 } from "../src/policy.js";
 
 describe("resolvePolicyPath", () => {
@@ -410,48 +412,6 @@ describe("mergePolicy", () => {
   });
 });
 
-describe("stripEmpty", () => {
-  it("returns null unchanged", () => {
-    assert.equal(stripEmpty(null), null);
-  });
-
-  it("returns primitives unchanged", () => {
-    assert.equal(stripEmpty(42), 42);
-    assert.equal(stripEmpty("x"), "x");
-    assert.equal(stripEmpty(true), true);
-  });
-
-  it("drops null fields from an object", () => {
-    assert.deepEqual(stripEmpty({ a: null, b: 1 }), { b: 1 });
-  });
-
-  it("drops empty arrays", () => {
-    assert.equal(stripEmpty({ a: [] }), undefined);
-    assert.deepEqual(stripEmpty({ a: [], b: [1] }), { b: [1] });
-  });
-
-  it("preserves non-empty arrays as-is", () => {
-    assert.deepEqual(stripEmpty({ a: [1, 2, 3] }), { a: [1, 2, 3] });
-  });
-
-  it("returns undefined when nested strip leaves an empty object", () => {
-    assert.equal(stripEmpty({ a: { b: null } }), undefined);
-  });
-
-  it("preserves non-empty nested objects", () => {
-    assert.deepEqual(stripEmpty({ a: { b: 1, c: null } }), { a: { b: 1 } });
-  });
-
-  it("drops the fence.json-style null patch sections", () => {
-    const patch = {
-      extends: "code",
-      network: null,
-      filesystem: { allowRead: [], allowWrite: null },
-    };
-    assert.deepEqual(stripEmpty(patch), { extends: "code" });
-  });
-});
-
 describe("stripNulls", () => {
   it("returns null/primitives unchanged", () => {
     assert.equal(stripNulls(null), null);
@@ -503,5 +463,144 @@ describe("diffPolicy", () => {
     const after = { network: { allowedDomains: ["registry.npmjs.org"] } };
     const diff = diffPolicy(before, after);
     assert.ok(diff.includes("registry.npmjs.org"));
+  });
+});
+
+describe("normalizeAdditionValue", () => {
+  it("lowercases domains and strips protocol + trailing dot", () => {
+    assert.equal(normalizeAdditionValue("network.allow", "Registry.NPMJS.org."), "registry.npmjs.org");
+    assert.equal(normalizeAdditionValue("network.allow", "https://example.com"), "example.com");
+    assert.equal(normalizeAdditionValue("network.deny", "  169.254.169.254  "), "169.254.169.254");
+  });
+
+  it("trims paths without changing case", () => {
+    assert.equal(normalizeAdditionValue("filesystem.allowRead", "  ./SRC  "), "./SRC");
+  });
+
+  it("trims commands without changing case", () => {
+    assert.equal(normalizeAdditionValue("command.deny", "  Git Push  "), "Git Push");
+  });
+});
+
+describe("assessAddition", () => {
+  it("blocks network wildcard *", () => {
+    const v = assessAddition({ kind: "network.allow", value: "*" });
+    assert.equal(v.block, true);
+    assert.ok(/wildcard/.test(v.reason));
+  });
+
+  it("allows narrow network additions", () => {
+    assert.equal(assessAddition({ kind: "network.allow", value: "*.npmjs.org" }).block, false);
+    assert.equal(assessAddition({ kind: "network.allow", value: "example.com" }).block, false);
+  });
+
+  it("blocks credential path reads and writes", () => {
+    assert.equal(assessAddition({ kind: "filesystem.allowRead", value: "~/.ssh/id_rsa" }).block, true);
+    assert.equal(assessAddition({ kind: "filesystem.allowWrite", value: "~/.aws/credentials" }).block, true);
+    assert.equal(assessAddition({ kind: "filesystem.allowRead", value: "~/.netrc" }).block, true);
+  });
+
+  it("blocks broad home globs", () => {
+    assert.equal(assessAddition({ kind: "filesystem.allowRead", value: "~/**" }).block, true);
+    assert.equal(assessAddition({ kind: "filesystem.allowWrite", value: "/Users/alice/*" }).block, true);
+  });
+
+  it("allows narrow workspace paths", () => {
+    assert.equal(assessAddition({ kind: "filesystem.allowRead", value: "./src" }).block, false);
+    assert.equal(assessAddition({ kind: "filesystem.allowWrite", value: "/tmp" }).block, false);
+  });
+
+  it("never blocks deny-side additions (they only tighten)", () => {
+    assert.equal(assessAddition({ kind: "filesystem.denyRead", value: "~/.ssh" }).block, false);
+    assert.equal(assessAddition({ kind: "network.deny", value: "evil.com" }).block, false);
+    assert.equal(assessAddition({ kind: "command.deny", value: "rm -rf" }).block, false);
+  });
+
+  it("rejects unknown kind, empty value, or non-string", () => {
+    assert.equal(assessAddition({ kind: "not.a.kind", value: "x" }).block, true);
+    assert.equal(assessAddition({ kind: "network.allow", value: "" }).block, true);
+    assert.equal(assessAddition({ kind: "network.allow", value: "   " }).block, true);
+    assert.equal(assessAddition(null).block, true);
+  });
+});
+
+describe("additionsToPatch", () => {
+  it("returns empty patch when no additions", () => {
+    assert.deepEqual(additionsToPatch({}, []), {});
+  });
+
+  it("creates a section with a single addition when current has none", () => {
+    const patch = additionsToPatch({}, [
+      { kind: "network.allow", value: "example.com" },
+    ]);
+    assert.deepEqual(patch, { network: { allowedDomains: ["example.com"] } });
+  });
+
+  it("unions with current array so mergePolicy's array-replace preserves existing entries", () => {
+    const current = { network: { allowedDomains: ["a.com"] } };
+    const patch = additionsToPatch(current, [
+      { kind: "network.allow", value: "b.com" },
+    ]);
+    assert.deepEqual(patch.network.allowedDomains, ["a.com", "b.com"]);
+    // And mergePolicy applied on top must preserve everything.
+    const merged = mergePolicy(current, patch);
+    assert.deepEqual(merged.network.allowedDomains, ["a.com", "b.com"]);
+  });
+
+  it("dedupes against current entries (case/protocol/trailing-dot insensitive)", () => {
+    const current = { network: { allowedDomains: ["Registry.NPMJS.org"] } };
+    const patch = additionsToPatch(current, [
+      { kind: "network.allow", value: "https://registry.npmjs.org." },
+    ]);
+    assert.deepEqual(patch, {});
+  });
+
+  it("dedupes against the extends template entries", () => {
+    const templateEntries = { network: { allowedDomains: ["registry.npmjs.org"] } };
+    const patch = additionsToPatch({}, [
+      { kind: "network.allow", value: "registry.npmjs.org" },
+      { kind: "network.allow", value: "pypi.org" },
+    ], { templateEntries });
+    assert.deepEqual(patch, { network: { allowedDomains: ["pypi.org"] } });
+  });
+
+  it("dedupes duplicate additions within a single batch", () => {
+    const patch = additionsToPatch({}, [
+      { kind: "network.allow", value: "a.com" },
+      { kind: "network.allow", value: "a.com" },
+      { kind: "network.allow", value: "A.com" },
+    ]);
+    assert.deepEqual(patch.network.allowedDomains, ["a.com"]);
+  });
+
+  it("handles multiple kinds in a single call", () => {
+    const patch = additionsToPatch({}, [
+      { kind: "network.allow", value: "a.com" },
+      { kind: "filesystem.allowRead", value: "./src" },
+      { kind: "command.deny", value: "rm -rf" },
+    ]);
+    assert.deepEqual(patch, {
+      network: { allowedDomains: ["a.com"] },
+      filesystem: { allowRead: ["./src"] },
+      command: { deny: ["rm -rf"] },
+    });
+  });
+
+  it("skips unknown kinds silently", () => {
+    const patch = additionsToPatch({}, [
+      { kind: "not.a.kind", value: "x" },
+      { kind: "network.allow", value: "a.com" },
+    ]);
+    assert.deepEqual(patch, { network: { allowedDomains: ["a.com"] } });
+  });
+
+  it("produces an empty patch when all additions are already granted", () => {
+    const current = { filesystem: { allowRead: ["./src"] } };
+    const templateEntries = { network: { allowedDomains: ["a.com"] } };
+    const patch = additionsToPatch(current, [
+      { kind: "network.allow", value: "a.com" },
+      { kind: "filesystem.allowRead", value: "./src" },
+    ], { templateEntries });
+    assert.deepEqual(patch, {});
   });
 });

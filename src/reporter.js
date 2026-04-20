@@ -33,6 +33,24 @@ export function formatText(exec, audit, rec) {
     lines.push("");
   }
 
+  if (Array.isArray(rec.acceptedAdditions) && rec.acceptedAdditions.length > 0) {
+    lines.push("Proposed additions:");
+    for (const a of rec.acceptedAdditions) {
+      const risk = a.riskLevel ?? "?";
+      const rationale = a.rationale ? ` — ${a.rationale}` : "";
+      lines.push(`  [${risk}] ${a.kind} ${a.value}${rationale}`);
+    }
+    lines.push("");
+  }
+
+  if (Array.isArray(rec.blockedAdditions) && rec.blockedAdditions.length > 0) {
+    lines.push("Blocked by sence safety rules (not applied):");
+    for (const b of rec.blockedAdditions) {
+      lines.push(`  ! ${b.kind} ${b.value} — ${b.blockReason}`);
+    }
+    lines.push("");
+  }
+
   if (rec.policyDiff) {
     lines.push("Proposed policy diff:");
     lines.push(rec.policyDiff);

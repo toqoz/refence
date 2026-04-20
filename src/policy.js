@@ -110,6 +110,117 @@ const DANGEROUS_GLOB_PATTERNS = [
   /^\/Users\/[^/]+\/\*\*?$/, // /Users/user/** or /Users/user/*
 ];
 
+// Addition kinds map to a [section, field] path inside fence.json.
+// Keep this list aligned with the suggester schema enum.
+export const ADDITION_KIND_PATH = {
+  "network.allow":         ["network", "allowedDomains"],
+  "network.deny":          ["network", "deniedDomains"],
+  "filesystem.allowRead":  ["filesystem", "allowRead"],
+  "filesystem.denyRead":   ["filesystem", "denyRead"],
+  "filesystem.allowWrite": ["filesystem", "allowWrite"],
+  "filesystem.denyWrite":  ["filesystem", "denyWrite"],
+  "command.deny":          ["command", "deny"],
+};
+
+const NETWORK_KINDS = new Set(["network.allow", "network.deny"]);
+
+function getArrayAt(obj, [a, b]) {
+  const section = obj?.[a];
+  if (!section || typeof section !== "object") return [];
+  const field = section[b];
+  return Array.isArray(field) ? field : [];
+}
+
+function setArrayAt(obj, [a, b], arr) {
+  if (!obj[a] || typeof obj[a] !== "object") obj[a] = {};
+  obj[a][b] = arr;
+}
+
+// Canonicalize an addition value for comparison only. The returned value is
+// used to dedupe against existing child/template entries; stored arrays keep
+// their authored spelling so patches don't churn on merge.
+export function normalizeAdditionValue(kind, value) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (NETWORK_KINDS.has(kind)) {
+    return trimmed.toLowerCase().replace(/^https?:\/\//, "").replace(/\.$/, "");
+  }
+  return trimmed;
+}
+
+// Decide whether a single proposed addition must be rejected outright.
+// This is the last line of defense: sence never trusts the LLM's riskLevel
+// for apply decisions — that field is informational UI metadata only.
+export function assessAddition(addition) {
+  if (!addition || typeof addition !== "object") {
+    return { block: true, reason: "invalid addition" };
+  }
+  const { kind, value } = addition;
+  if (!ADDITION_KIND_PATH[kind]) {
+    return { block: true, reason: `unknown kind: ${kind}` };
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return { block: true, reason: "empty value" };
+  }
+  const normalized = normalizeAdditionValue(kind, value);
+  if (kind === "network.allow" && normalized === "*") {
+    return { block: true, reason: 'wildcard "*" allows all egress' };
+  }
+  if (kind === "filesystem.allowRead" || kind === "filesystem.allowWrite") {
+    for (const pattern of CREDENTIAL_PATTERNS) {
+      if (pattern.test(normalized)) {
+        return { block: true, reason: `credential path: ${normalized}` };
+      }
+    }
+    for (const glob of DANGEROUS_GLOB_PATTERNS) {
+      if (glob.test(normalized)) {
+        return { block: true, reason: `glob too broad: ${normalized}` };
+      }
+    }
+  }
+  return { block: false, reason: null };
+}
+
+// Convert accepted additions into a minimal partial fence.json for mergePolicy.
+// Each modified array is written as currentPolicy's existing entries plus the
+// new unique values — mergePolicy replaces arrays wholesale, so the patch must
+// preserve what was already there. Entries already granted by the extends
+// template are skipped so the child stays minimal.
+//
+// Inputs assumed pre-filtered: pass only additions that passed assessAddition.
+export function additionsToPatch(currentPolicy, additions, { templateEntries } = {}) {
+  const grouped = new Map();
+  for (const add of additions || []) {
+    const path = ADDITION_KIND_PATH[add?.kind];
+    if (!path) continue;
+    const normalized = normalizeAdditionValue(add.kind, add.value);
+    if (typeof normalized !== "string" || normalized.length === 0) continue;
+    if (!grouped.has(add.kind)) grouped.set(add.kind, []);
+    grouped.get(add.kind).push(normalized);
+  }
+
+  const patch = {};
+  for (const [kind, newValues] of grouped) {
+    const path = ADDITION_KIND_PATH[kind];
+    const currentArr = getArrayAt(currentPolicy ?? {}, path);
+    const templateArr = getArrayAt(templateEntries ?? {}, path);
+
+    const seen = new Set();
+    for (const v of currentArr) seen.add(normalizeAdditionValue(kind, v));
+    for (const v of templateArr) seen.add(normalizeAdditionValue(kind, v));
+
+    const toAppend = [];
+    for (const v of newValues) {
+      if (seen.has(v)) continue;
+      seen.add(v);
+      toAppend.push(v);
+    }
+    if (toAppend.length === 0) continue;
+    setArrayAt(patch, path, [...currentArr, ...toAppend]);
+  }
+  return patch;
+}
+
 const ALLOWED_EXTENDS = ["code", "code-strict", "code-relaxed", "local-dev-server"];
 
 // Reject a patch that would change the current policy's `extends`.
@@ -165,25 +276,6 @@ export function validatePolicy(policy) {
     }
   }
   return errors;
-}
-
-// Recursively drop null values, empty arrays, and resulting empty objects.
-// Used by the LLM suggester path: the structured-output schema forces
-// every property to be present, so the model fills unchanged sections
-// with null/[] per the prompt contract, and we want a minimal diff.
-//
-// Do NOT use this for user-authored --patch files: it would silently
-// turn `{network:{allowedDomains:[]}}` (revoke allowlist) into a no-op.
-// Use stripNulls() for that path.
-export function stripEmpty(obj) {
-  if (obj == null || typeof obj !== "object") return obj;
-  if (Array.isArray(obj)) return obj.length === 0 ? undefined : obj;
-  const out = {};
-  for (const [k, v] of Object.entries(obj)) {
-    const stripped = stripEmpty(v);
-    if (stripped !== undefined && stripped !== null) out[k] = stripped;
-  }
-  return Object.keys(out).length === 0 ? undefined : out;
 }
 
 // Recursively drop null values only. Null has no representation in

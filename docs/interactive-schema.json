@@ -1,77 +1,56 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["proposedPolicy", "explanation", "resumeCommand"],
+  "required": ["proposedAdditions", "explanation", "resumeCommand"],
   "additionalProperties": false,
   "properties": {
-    "proposedPolicy": {
-      "type": "object",
-      "description": "The complete new fence.json content",
-      "required": ["extends", "network", "filesystem", "command"],
-      "additionalProperties": false,
-      "properties": {
-        "extends": {
-          "type": ["string", "null"],
-          "description": "Base template to extend"
-        },
-        "network": {
-          "type": ["object", "null"],
-          "required": ["allowedDomains", "deniedDomains"],
-          "additionalProperties": false,
-          "properties": {
-            "allowedDomains": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            },
-            "deniedDomains": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            }
-          }
-        },
-        "filesystem": {
-          "type": ["object", "null"],
-          "required": ["allowRead", "denyRead", "allowWrite", "denyWrite"],
-          "additionalProperties": false,
-          "properties": {
-            "allowRead": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            },
-            "denyRead": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            },
-            "allowWrite": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            },
-            "denyWrite": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            }
-          }
-        },
-        "command": {
-          "type": ["object", "null"],
-          "required": ["deny"],
-          "additionalProperties": false,
-          "properties": {
-            "deny": {
-              "type": ["array", "null"],
-              "items": { "type": "string" }
-            }
+    "proposedAdditions": {
+      "type": "array",
+      "description": "Flat list of entries to add to the child fence.json. sence merges them into existing arrays. Never re-list existing entries here.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "value", "riskLevel", "rationale", "relatedDenial"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "network.allow",
+              "network.deny",
+              "filesystem.allowRead",
+              "filesystem.denyRead",
+              "filesystem.allowWrite",
+              "filesystem.denyWrite",
+              "command.deny"
+            ]
+          },
+          "value": {
+            "type": "string",
+            "description": "A single fence.json entry, e.g. a domain, path, or command prefix."
+          },
+          "riskLevel": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "description": "Informational only. sence applies its own static safety checks independently."
+          },
+          "rationale": {
+            "type": "string",
+            "description": "One short sentence explaining why this entry is needed."
+          },
+          "relatedDenial": {
+            "type": ["string", "null"],
+            "description": "Trace string identifying which denial this addition addresses (e.g. \"file:/path read\", \"net:host:port\")."
           }
         }
       }
     },
     "explanation": {
       "type": "string",
-      "description": "One short sentence explaining the policy change"
+      "description": "One short sentence describing the overall change."
     },
     "resumeCommand": {
       "type": ["string", "null"],
-      "description": "The shell command to resume the agent session, or null if unknown"
+      "description": "The shell command to resume the agent session, or null if unknown."
     }
   }
 }

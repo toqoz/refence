@@ -18,6 +18,13 @@ const baseAudit = {
 
 const baseRec = {
   explanation: "Allow npm registry access for dependency installation.",
+  proposedAdditions: [
+    { kind: "network.allow", value: "registry.npmjs.org", riskLevel: "low", rationale: "npm install", relatedDenial: "net:registry.npmjs.org:443" },
+  ],
+  acceptedAdditions: [
+    { kind: "network.allow", value: "registry.npmjs.org", riskLevel: "low", rationale: "npm install", relatedDenial: "net:registry.npmjs.org:443" },
+  ],
+  blockedAdditions: [],
   proposedPolicy: { network: { allowedDomains: ["registry.npmjs.org"] } },
   policyDiff: "--- a/fence.json\n+++ b/fence.json\n@@ ...",
   autoApplied: false,
@@ -71,6 +78,29 @@ describe("formatText", () => {
     const text = formatText({ ...baseExec, exitCode: 0 }, cleanAudit, cleanRec);
     assert.ok(text.includes("exit: 0"));
     assert.ok(!text.includes("Recommendation:"));
+  });
+
+  it("lists accepted additions with risk and rationale", () => {
+    const text = formatText(baseExec, baseAudit, baseRec);
+    assert.ok(text.includes("Proposed additions:"));
+    assert.ok(text.includes("[low] network.allow registry.npmjs.org"));
+    assert.ok(text.includes("npm install"));
+  });
+
+  it("surfaces blocked additions with their block reason", () => {
+    const rec = {
+      ...baseRec,
+      acceptedAdditions: [],
+      blockedAdditions: [
+        { kind: "filesystem.allowRead", value: "~/.ssh", blockReason: "credential path: ~/.ssh" },
+      ],
+      proposedPolicy: undefined,
+      policyDiff: "",
+    };
+    const text = formatText(baseExec, baseAudit, rec);
+    assert.ok(text.includes("Blocked by sence safety rules"));
+    assert.ok(text.includes("filesystem.allowRead ~/.ssh"));
+    assert.ok(text.includes("credential path"));
   });
 });
 

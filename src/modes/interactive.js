@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { buildFenceArgs, teeMonitorLog } from "../executor.js";
 import { audit } from "../auditor.js";
 import { callCodex, loadExtendsTemplate } from "../suggester.js";
-import { ensurePolicy, writePolicy, diffPolicy, validatePolicy, mergePolicy, defaultPolicyForProfile, assertExtendsImmutable } from "../policy.js";
+import { ensurePolicy, writePolicy, diffPolicy, validatePolicy, mergePolicy, defaultPolicyForProfile, additionsToPatch, assessAddition } from "../policy.js";
 import { isInsideTmux, sendEscape, capturePaneContent, displayPopup, supportsPopup, currentPane, prefillInput } from "../tmux.js";
 import { shellQuote } from "../cli.js";
 
@@ -38,9 +38,8 @@ function buildInteractivePrompt({ currentPolicy, auditSummary, screenContent, or
   const templateSection = tmpl
     ? `## Baseline from "extends": "${tmpl.name}"
 
-fence(1) merges this template under the current fence.json. Arrays from the
-template are appended to the child's arrays at runtime. Treat every entry
-below as already granted — do NOT duplicate them into the child policy.
+fence(1) merges this template under the current fence.json at runtime. Treat
+every entry below as already granted — no need to propose them.
 
 \`\`\`json
 ${tmpl.json.trim()}
@@ -54,21 +53,29 @@ policy.
 
   return `## Task
 
-Propose the minimal safe fence.json policy change, and if possible, the exact command to resume the agent session.
+Propose a flat list of additions to the child fence.json so the agent can
+resume, and if possible the exact command to resume the agent session.
+
+You do NOT need to emit the full fence.json, diff existing arrays, or re-list
+entries that are already granted. sence will append your additions to the
+existing arrays, dedupe against current and the baseline template, and reject
+any entry that violates the safety rules below.
 
 ## Rules
 
-- Never allow credential paths listed in the Reference below.
-- Never change "extends". If the current fence.json has one, keep the exact
-  same value (or omit the field). Do not propose switching templates, even
-  if a different template would match better — add the missing allowances
-  to the current extends instead.
-- Do not duplicate entries already present in the baseline template above;
-  fence appends template arrays to the child's at runtime.
-- Return the complete resulting fence.json in proposedPolicy, not a partial diff.
-- Make the smallest safe change from the current fence.json.
-- Prefer narrow domain wildcards (e.g. "*.npmjs.org") over broad ones.
-- Set resumeCommand to null if you cannot find the session ID in the screen content.
+- Cover EVERY denial in the audit. Each \`deniedFiles\` / \`deniedNetwork\`
+  entry should produce at least one addition, unless intentionally skipped
+  for safety (note in rationale).
+- Every addition must directly address a denial from the audit above.
+  Do NOT propose tightening (extra command.deny, network.deny, etc.) for
+  anything that was not denied — the goal is the smallest change to resume
+  the agent, not a hardening pass.
+- Prefer narrow wildcards ("*.npmjs.org") over broad ones ("*").
+- Never propose credential paths under allowRead/allowWrite (sence will
+  block them regardless). Never propose broad home globs.
+- Assign riskLevel per entry: "low" / "medium" / "high". Informational only.
+- Set relatedDenial to a short trace string identifying the unblocked denial.
+- Set resumeCommand to null if the session ID is not visible in the screen.
 
 ## Reference
 
@@ -79,7 +86,7 @@ ${templateSection}
 
 ${JSON.stringify(originalCommand)}
 
-## Current fence.json
+## Current fence.json (child)
 
 ${JSON.stringify(currentPolicy, null, 2)}
 
@@ -97,7 +104,7 @@ ${screenContent.slice(-4000)}
 
 Reply with ONLY this JSON:
 
-{"proposedPolicy":{...},"explanation":"one short sentence","resumeCommand":"command to resume or null"}`;
+{"proposedAdditions":[{"kind":"...","value":"...","riskLevel":"low|medium|high","rationale":"...","relatedDenial":"..."}],"explanation":"one short sentence","resumeCommand":"command to resume or null"}`;
 }
 
 function runInteractiveSuggester({ currentPolicy, auditSummary, screenContent, originalCommand, model }) {
@@ -158,24 +165,30 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
     model,
   });
 
-  if (rec.error || !rec.proposedPolicy) {
+  if (rec.error || !Array.isArray(rec.proposedAdditions)) {
     logEvent(logPath, `[sence] Suggester error: ${rec.error || "no proposal"}`);
     process.exit(exitCode);
   }
 
-  try {
-    assertExtendsImmutable(currentPolicy, rec.proposedPolicy);
-  } catch (err) {
-    logEvent(logPath, `[sence] Rejected suggestion: ${err.message}`);
-    process.exit(exitCode);
+  const acceptedAdditions = [];
+  const blockedAdditions = [];
+  for (const add of rec.proposedAdditions) {
+    const verdict = assessAddition(add);
+    if (verdict.block) blockedAdditions.push({ ...add, blockReason: verdict.reason });
+    else acceptedAdditions.push(add);
   }
 
-  // Merge proposal into current policy so partial responses don't lose fields
-  const mergedPolicy = mergePolicy(currentPolicy, rec.proposedPolicy);
+  const tmpl = loadExtendsTemplate(currentPolicy);
+  const patch = additionsToPatch(currentPolicy, acceptedAdditions, { templateEntries: tmpl?.entries ?? null });
+  const mergedPolicy = mergePolicy(currentPolicy, patch);
 
   const policyDiff = diffPolicy(currentPolicy, mergedPolicy);
   if (!policyDiff) {
     logEvent(logPath, "[sence] No policy changes suggested.");
+    if (blockedAdditions.length > 0) {
+      logEvent(logPath, "[sence] Blocked additions:");
+      for (const b of blockedAdditions) logEvent(logPath, `  - ${b.kind} ${b.value}: ${b.blockReason}`);
+    }
     process.exit(exitCode);
   }
 
@@ -190,6 +203,8 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
   const policyAccepted = await askPolicyApply({
     auditSummary,
     explanation: rec.explanation,
+    acceptedAdditions,
+    blockedAdditions,
     policyDiff,
     paneId,
     logPath,
@@ -268,7 +283,7 @@ function runAndMonitor({ fenceArgs, paneId, logPath }) {
   });
 }
 
-async function askPolicyApply({ auditSummary, explanation, policyDiff, paneId, logPath }) {
+async function askPolicyApply({ auditSummary, explanation, acceptedAdditions = [], blockedAdditions = [], policyDiff, paneId, logPath }) {
   const lines = [];
   lines.push("=== Sandbox Violation ===");
   lines.push("");
@@ -276,6 +291,20 @@ async function askPolicyApply({ auditSummary, explanation, policyDiff, paneId, l
   for (const file of auditSummary.deniedFiles) lines.push(`  denied file: ${file.path} (${file.action})`);
   lines.push("");
   if (explanation) lines.push(`Recommendation: ${explanation}`);
+  if (acceptedAdditions.length > 0) {
+    lines.push("");
+    lines.push("Proposed additions:");
+    for (const a of acceptedAdditions) {
+      lines.push(`  [${a.riskLevel ?? "?"}] ${a.kind} ${a.value} — ${a.rationale ?? ""}`);
+    }
+  }
+  if (blockedAdditions.length > 0) {
+    lines.push("");
+    lines.push("Blocked by sence safety rules (not applied):");
+    for (const b of blockedAdditions) {
+      lines.push(`  ! ${b.kind} ${b.value} — ${b.blockReason}`);
+    }
+  }
   lines.push("");
   lines.push("Proposed policy diff:");
   lines.push(policyDiff);

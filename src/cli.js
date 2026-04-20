@@ -1,9 +1,9 @@
 import { writeFileSync, readFileSync, mkdtempSync } from "node:fs";
 import { execute } from "./executor.js";
 import { audit } from "./auditor.js";
-import { runSuggester } from "./suggester.js";
+import { runSuggester, loadExtendsTemplate } from "./suggester.js";
 import { formatText, formatJson } from "./reporter.js";
-import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, defaultPolicyForProfile, assertExtendsImmutable } from "./policy.js";
+import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, defaultPolicyForProfile, assertExtendsImmutable, additionsToPatch, assessAddition } from "./policy.js";
 import { runInteractiveMode } from "./modes/interactive.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -295,25 +295,34 @@ export async function run(argv) {
   if (wantSuggest) {
     rec = runSuggester({ currentPolicy, auditSummary, model: opts.model });
 
-    if (rec.proposedPolicy) {
-      try {
-        assertExtendsImmutable(currentPolicy, rec.proposedPolicy);
-      } catch (err) {
-        rec = { autoApplied: false, error: `Rejected suggestion: ${err.message}` };
+    if (Array.isArray(rec.proposedAdditions)) {
+      const accepted = [];
+      const blocked = [];
+      for (const add of rec.proposedAdditions) {
+        const verdict = assessAddition(add);
+        if (verdict.block) blocked.push({ ...add, blockReason: verdict.reason });
+        else accepted.push(add);
       }
-    }
+      rec.acceptedAdditions = accepted;
+      rec.blockedAdditions = blocked;
 
-    if (rec.proposedPolicy) {
-      // Diff against the merged result so the displayed diff matches what --patch actually applies
-      const merged = mergePolicy(currentPolicy, rec.proposedPolicy);
-      rec.policyDiff = diffPolicy(currentPolicy, merged);
+      const tmpl = loadExtendsTemplate(currentPolicy);
+      const patch = additionsToPatch(currentPolicy, accepted, { templateEntries: tmpl?.entries ?? null });
+      // Merge into current to compute the final state and a stable diff.
+      const merged = mergePolicy(currentPolicy, patch);
+      const policyErrors = validatePolicy(merged);
+      if (policyErrors.length > 0) {
+        rec.error = `Rejected suggestion: ${policyErrors.join("; ")}`;
+      } else {
+        rec.proposedPolicy = patch;
+        rec.policyDiff = diffPolicy(currentPolicy, merged);
 
-      // Write patch file (partial — will be merged on apply)
-      if (rec.policyDiff) {
-        const tmpDir = mkdtempSync(join(tmpdir(), "sence-"));
-        const patchFile = join(tmpDir, "policy.json");
-        writeFileSync(patchFile, JSON.stringify(rec.proposedPolicy, null, 2) + "\n");
-        rec.patchFile = patchFile;
+        if (rec.policyDiff) {
+          const tmpDir = mkdtempSync(join(tmpdir(), "sence-"));
+          const patchFile = join(tmpDir, "policy.json");
+          writeFileSync(patchFile, JSON.stringify(patch, null, 2) + "\n");
+          rec.patchFile = patchFile;
+        }
       }
     }
   }
