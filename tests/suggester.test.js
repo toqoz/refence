@@ -85,4 +85,21 @@ describe("parseRecommendation", () => {
     const result = parseRecommendation(output);
     assert.equal(result.autoApplied, false);
   });
+
+  it("picks the first object when codex emits duplicated JSON", () => {
+    // codex sometimes concatenates the same structured output twice.
+    // extractFirstJson handles this via brace-counting.
+    const first = {
+      proposedPolicy: { network: { allowedDomains: ["first.example.com"] } },
+      explanation: "first",
+    };
+    const second = {
+      proposedPolicy: { network: { allowedDomains: ["second.example.com"] } },
+      explanation: "second",
+    };
+    const output = JSON.stringify(first) + JSON.stringify(second);
+    const result = parseRecommendation(output);
+    assert.deepEqual(result.proposedPolicy.network.allowedDomains, ["first.example.com"]);
+    assert.equal(result.explanation, "first");
+  });
 });
