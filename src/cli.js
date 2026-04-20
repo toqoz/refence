@@ -145,6 +145,19 @@ function getDataDir() {
   return join(process.env.HOME, ".local", "share");
 }
 
+function getStateDir() {
+  if (process.env.XDG_STATE_HOME) return process.env.XDG_STATE_HOME;
+  if (!process.env.HOME) {
+    process.stderr.write("[sence] Fatal: HOME is not set.\n");
+    process.exit(2);
+  }
+  return join(process.env.HOME, ".local", "state");
+}
+
+function resolveMonitorLogPath({ stateDir, profile }) {
+  return join(stateDir, "sence", profile, "monitor.log");
+}
+
 function shellQuote(s) {
   if (/^[a-zA-Z0-9_./:@=-]+$/.test(s)) return s;
   return "'" + s.replace(/'/g, "'\\''") + "'";
@@ -173,9 +186,11 @@ export async function run(argv) {
 
   const configDir = getConfigDir();
   const dataDir = getDataDir();
+  const stateDir = getStateDir();
   opts.profile = resolveProfileName(opts.profile);
   const policyPath = resolvePolicyPath({ configDir, profile: opts.profile });
   const snapshotDir = resolveSnapshotDir({ dataDir, profile: opts.profile });
+  const logPath = resolveMonitorLogPath({ stateDir, profile: opts.profile });
 
   if (opts.rollback !== undefined) {
     let result;
@@ -202,6 +217,7 @@ export async function run(argv) {
       profile: opts.profile,
       suggest: opts.suggest,
       model: opts.model,
+      logPath,
     });
     return;
   }
@@ -252,6 +268,7 @@ export async function run(argv) {
     command: opts.command,
     profile: opts.profile,
     settingsPath: policyPath,
+    monitor: { stderr: true },
   });
 
   if (execResult.spawnError) {

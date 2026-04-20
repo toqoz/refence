@@ -70,6 +70,7 @@ describe("integration: CLI safety and lifecycle", () => {
       run(["--suggest", "never", "--", "echo", "x"], {
         XDG_CONFIG_HOME: join(tmp, "config"),
         XDG_DATA_HOME: join(tmp, "data"),
+        XDG_STATE_HOME: join(tmp, "state"),
       });
       const policyPath = join(tmp, "config", "sence", "default:default", "fence.json");
       assert.ok(existsSync(policyPath), `policy file should exist at ${policyPath}`);
@@ -85,6 +86,7 @@ describe("integration: CLI safety and lifecycle", () => {
       run(["--suggest", "never", "--profile", "code-strict:foo", "--", "echo", "x"], {
         XDG_CONFIG_HOME: join(tmp, "config"),
         XDG_DATA_HOME: join(tmp, "data"),
+        XDG_STATE_HOME: join(tmp, "state"),
       });
       const policyPath = join(tmp, "config", "sence", "code-strict:foo", "fence.json");
       assert.ok(existsSync(policyPath), `policy file should exist at ${policyPath}`);
@@ -103,6 +105,7 @@ describe("integration: CLI safety and lifecycle", () => {
       const r = run(["--suggest", "never", "--", "echo", "x"], {
         XDG_CONFIG_HOME: join(tmp, "config"),
         XDG_DATA_HOME: join(tmp, "data"),
+        XDG_STATE_HOME: join(tmp, "state"),
       });
       assert.equal(r.status, 2);
       assert.ok(r.stderr.includes("corrupt"), `expected 'corrupt' in stderr:\n${r.stderr}`);
@@ -118,6 +121,7 @@ describe("integration: CLI safety and lifecycle", () => {
       const r = run(["--rollback"], {
         XDG_CONFIG_HOME: join(tmp, "config"),
         XDG_DATA_HOME: join(tmp, "data"),
+        XDG_STATE_HOME: join(tmp, "state"),
       });
       assert.equal(r.status, 1);
       assert.ok(r.stderr.includes("Only 0 snapshot(s) available"), `got stderr:\n${r.stderr}`);
@@ -136,6 +140,7 @@ describe("integration: CLI safety and lifecycle", () => {
       const r = run(["--suggest", "never", "--patch", patchFile, "--", "echo", "x"], {
         XDG_CONFIG_HOME: join(tmp, "config"),
         XDG_DATA_HOME: join(tmp, "data"),
+        XDG_STATE_HOME: join(tmp, "state"),
       });
       assert.equal(r.status, 2);
       assert.ok(r.stderr.includes("Refusing to apply unsafe policy"), `got stderr:\n${r.stderr}`);
@@ -249,18 +254,20 @@ describe("integration: batch mode via tmux", { skip: !hasPrereqs() && "tmux or f
   it("does not modify policy on a failed run without --patch", async () => {
     const cfgDir = join(TEST_TMP, "noapply-config");
     const dataDir = join(TEST_TMP, "noapply-data");
+    const stateDir = join(TEST_TMP, "noapply-state");
     try {
-      await runAndCapture(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never echo init`);
+      await runAndCapture(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} XDG_STATE_HOME=${stateDir} node ${BIN} --suggest never echo init`);
 
       const policyPath = join(cfgDir, "sence", "default:default", "fence.json");
 
-      await runAndCapture(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never curl -s https://example.com`);
+      await runAndCapture(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} XDG_STATE_HOME=${stateDir} node ${BIN} --suggest never curl -s https://example.com`);
 
       const policyAfter = JSON.parse(readFileSync(policyPath, "utf-8"));
       assert.deepEqual(policyAfter, {}, "policy should not have been modified");
     } finally {
       rmSync(cfgDir, { recursive: true, force: true });
       rmSync(dataDir, { recursive: true, force: true });
+      rmSync(stateDir, { recursive: true, force: true });
     }
   });
 });
@@ -324,6 +331,7 @@ describe("integration: patch + rollback via tmux", { skip: !hasPrereqs() && "tmu
   it("applies patch and writes policy", async () => {
     const configDir = join(tmpDir, "config");
     const dataDir = join(tmpDir, "data");
+    const stateDir = join(tmpDir, "state");
     const patchFile = join(tmpDir, "patch.json");
 
     writeFileSync(patchFile, JSON.stringify({
@@ -331,7 +339,7 @@ describe("integration: patch + rollback via tmux", { skip: !hasPrereqs() && "tmu
       network: { allowedDomains: ["example.com"] },
     }, null, 2));
 
-    const cmd = `XDG_CONFIG_HOME=${configDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never --patch ${patchFile} echo patched`;
+    const cmd = `XDG_CONFIG_HOME=${configDir} XDG_DATA_HOME=${dataDir} XDG_STATE_HOME=${stateDir} node ${BIN} --suggest never --patch ${patchFile} echo patched`;
     const out = await runAndCapture(cmd, 15_000);
     assert.ok(
       out.includes("Applied policy patch") || out.includes("patched"),
@@ -349,7 +357,8 @@ describe("integration: suggest → patch → re-run loop", { skip: (!hasFence() 
     try {
       const configDir = join(tmp, "config");
       const dataDir = join(tmp, "data");
-      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir };
+      const stateDir = join(tmp, "state");
+      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir, XDG_STATE_HOME: stateDir };
 
       const r1 = spawnSync("node", [BIN, "--", "curl", "-sf", "https://example.com"], {
         encoding: "utf-8", env, timeout: 45_000,

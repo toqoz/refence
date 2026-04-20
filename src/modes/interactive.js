@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { writeFileSync, readFileSync, mkdtempSync } from "node:fs";
-import { createInterface } from "node:readline";
+import { writeFileSync, readFileSync, appendFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -20,6 +19,19 @@ const DEBOUNCE_MS = 1500;
 
 const ESC_WAIT_MS = 2000;
 const KILL_WAIT_MS = 3000;
+
+// Interactive mode must not write to stderr while the wrapped TUI owns the
+// pane (even post-kill, residual output would clutter the pane the user
+// returns to). Route sence status/error messages to the monitor log file.
+function logEvent(logPath, msg) {
+  if (!logPath) return;
+  try {
+    mkdirSync(dirname(logPath), { recursive: true });
+    appendFileSync(logPath, msg.endsWith("\n") ? msg : msg + "\n");
+  } catch {
+    // best-effort
+  }
+}
 
 function buildInteractivePrompt({ currentPolicy, auditSummary, screenContent, originalCommand }) {
   return `## Task
@@ -69,7 +81,7 @@ function runInteractiveSuggester({ currentPolicy, auditSummary, screenContent, o
   return callCodex({ prompt, schemaPath: INTERACTIVE_SCHEMA, model });
 }
 
-export async function runInteractiveMode({ command, policyPath, snapshotDir, profile, suggest = "auto", model }) {
+export async function runInteractiveMode({ command, policyPath, snapshotDir, profile, suggest = "auto", model, logPath }) {
   if (!isInsideTmux()) {
     process.stderr.write("[sence] --interactive requires tmux.\n");
     process.exit(2);
@@ -93,7 +105,7 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
   }
   const fenceArgs = buildFenceArgs({ command, settingsPath: policyPath });
 
-  const { exitCode, denials } = await runAndMonitor({ fenceArgs, paneId });
+  const { exitCode, denials } = await runAndMonitor({ fenceArgs, paneId, logPath });
 
   if (denials.length === 0) {
     // No denials — normal exit
@@ -108,12 +120,12 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
   const auditSummary = audit({ exitCode, monitorLog });
 
   if (suggest === "never") {
-    process.stderr.write(`[sence] ${denials.length} denial(s) detected. Skipping suggestions (--suggest never).\n`);
+    logEvent(logPath, `[sence] ${denials.length} denial(s) detected. Skipping suggestions (--suggest never).`);
     process.exit(exitCode);
   }
 
   // Suggest
-  process.stderr.write("[sence] Analyzing sandbox violations...\n");
+  logEvent(logPath, "[sence] Analyzing sandbox violations...");
   const rec = runInteractiveSuggester({
     currentPolicy,
     auditSummary,
@@ -123,7 +135,7 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
   });
 
   if (rec.error || !rec.proposedPolicy) {
-    process.stderr.write(`[sence] Suggester error: ${rec.error || "no proposal"}\n`);
+    logEvent(logPath, `[sence] Suggester error: ${rec.error || "no proposal"}`);
     process.exit(exitCode);
   }
 
@@ -132,14 +144,14 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
 
   const policyDiff = diffPolicy(currentPolicy, mergedPolicy);
   if (!policyDiff) {
-    process.stderr.write("[sence] No policy changes suggested.\n");
+    logEvent(logPath, "[sence] No policy changes suggested.");
     process.exit(exitCode);
   }
 
   const errors = validatePolicy(mergedPolicy);
   if (errors.length > 0) {
-    process.stderr.write("[sence] Refusing unsafe policy:\n");
-    for (const e of errors) process.stderr.write(`  - ${e}\n`);
+    logEvent(logPath, "[sence] Refusing unsafe policy:");
+    for (const e of errors) logEvent(logPath, `  - ${e}`);
     process.exit(exitCode);
   }
 
@@ -149,27 +161,28 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, pro
     explanation: rec.explanation,
     policyDiff,
     paneId,
+    logPath,
   });
 
   if (policyAccepted) {
     writePolicy(policyPath, mergedPolicy, { snapshotDir });
-    process.stderr.write(`[sence] Policy updated: ${policyPath}\n`);
+    logEvent(logPath, `[sence] Policy updated: ${policyPath}`);
   } else {
-    process.stderr.write("[sence] Policy not changed.\n");
+    logEvent(logPath, "[sence] Policy not changed.");
   }
 
-  // Step 2: Show resume command and prefill in the pane
-  // NOTE: The resume command is LLM-generated. Review before executing.
+  // Step 2: Prefill resume command in the pane (user reviews before running)
+  // NOTE: The resume command is LLM-generated.
   if (rec.resumeCommand) {
     const resumeCmd = `sence --interactive -- ${rec.resumeCommand}`;
-    process.stderr.write(`\nSuggested resume command (review before running):\n  ${resumeCmd}\n`);
+    logEvent(logPath, `[sence] Suggested resume command: ${resumeCmd}`);
     prefillInput(paneId, resumeCmd);
   }
 
   process.exit(exitCode);
 }
 
-function runAndMonitor({ fenceArgs, paneId }) {
+function runAndMonitor({ fenceArgs, paneId, logPath }) {
   return new Promise((resolve) => {
     const child = spawn(fenceArgs[0], fenceArgs.slice(1), {
       stdio: ["inherit", "inherit", "inherit", "pipe"],
@@ -207,7 +220,7 @@ function runAndMonitor({ fenceArgs, paneId }) {
           }, KILL_WAIT_MS);
         }, ESC_WAIT_MS);
       }, DEBOUNCE_MS);
-    });
+    }, { logPath });
 
     // Mark exited early so the kill-ladder above short-circuits, but wait
     // for "close" so the fd3 pipe drains and no trailing denial is lost.
@@ -224,7 +237,7 @@ function runAndMonitor({ fenceArgs, paneId }) {
   });
 }
 
-async function askPolicyApply({ auditSummary, explanation, policyDiff, paneId }) {
+async function askPolicyApply({ auditSummary, explanation, policyDiff, paneId, logPath }) {
   const lines = [];
   lines.push("=== Sandbox Violation ===");
   lines.push("");
@@ -265,13 +278,9 @@ async function askPolicyApply({ auditSummary, explanation, policyDiff, paneId })
     }
   }
 
-  // Fallback: stderr
-  process.stderr.write(content);
-  return new Promise((resolve) => {
-    const rl = createInterface({ input: process.stdin, output: process.stderr });
-    rl.question("Apply this policy change? [y/N] ", (answer) => {
-      rl.close();
-      resolve(answer.trim().toLowerCase() === "y" || answer.trim().toLowerCase() === "yes");
-    });
-  });
+  // No popup (tmux < 3.2): cannot prompt without polluting the pane.
+  // Log the proposal and reject so the user has a record and no silent apply.
+  logEvent(logPath, "[sence] Cannot prompt for review — tmux popup unavailable. Rejecting by default.");
+  logEvent(logPath, content);
+  return false;
 }
