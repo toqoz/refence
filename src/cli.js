@@ -3,7 +3,7 @@ import { execute } from "./executor.js";
 import { audit } from "./auditor.js";
 import { runSuggester, loadExtendsTemplate } from "./suggester.js";
 import { formatText, formatJson } from "./reporter.js";
-import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, defaultPolicyForProfile, assertExtendsImmutable, additionsToPatch, assessAddition } from "./policy.js";
+import { resolvePolicyPath, resolveSnapshotDir, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, resolveStateKey, defaultPolicyForProfile, assertExtendsImmutable, additionsToPatch, assessAddition } from "./policy.js";
 import { runInteractiveMode } from "./modes/interactive.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -16,7 +16,10 @@ Run a command inside a fence sandbox with monitoring, audit, and policy advice.
 Options:
   --interactive                     Interactive mode (monitors denials, auto-suggests policy, works with any agent)
   --profile <name>             Policy profile (default: default)
-                               Use <template>:<name> to start from a fence template
+                               Forms:
+                                 <name>                        (→ default:<name>)
+                                 <template>:<name>             (start from a fence template)
+                                 <template>:<name>:<config-dir> (place fence.json at <config-dir>/fence.json)
                                Run \`fence --list-templates\` for available templates
   --patch <file>               Apply a policy patch file before running the command
   --rollback [STEP]            Rollback policy (default: 1)
@@ -32,6 +35,7 @@ Examples:
   sence --profile code:npm-i npm install
   sence --profile code:default npm install
   sence --profile strict npm install
+  sence --profile code:local:. npm install   # fence.json in cwd
   sence --patch /tmp/sence-abc123.json npm install
   sence --rollback
 `;
@@ -136,15 +140,6 @@ function getConfigDir() {
   return join(process.env.HOME, ".config");
 }
 
-function getDataDir() {
-  if (process.env.XDG_DATA_HOME) return process.env.XDG_DATA_HOME;
-  if (!process.env.HOME) {
-    process.stderr.write("[sence] Fatal: HOME is not set.\n");
-    process.exit(2);
-  }
-  return join(process.env.HOME, ".local", "share");
-}
-
 function getStateDir() {
   if (process.env.XDG_STATE_HOME) return process.env.XDG_STATE_HOME;
   if (!process.env.HOME) {
@@ -155,7 +150,7 @@ function getStateDir() {
 }
 
 function resolveMonitorLogPath({ stateDir, profile }) {
-  return join(stateDir, "sence", profile, "monitor.log");
+  return join(stateDir, "sence", resolveStateKey(profile), "monitor.log");
 }
 
 function shellQuote(s) {
@@ -185,11 +180,15 @@ export async function run(argv) {
   }
 
   const configDir = getConfigDir();
-  const dataDir = getDataDir();
   const stateDir = getStateDir();
-  opts.profile = resolveProfileName(opts.profile);
+  try {
+    opts.profile = resolveProfileName(opts.profile);
+  } catch (err) {
+    process.stderr.write(`[sence] ${err.message}\n`);
+    process.exit(2);
+  }
   const policyPath = resolvePolicyPath({ configDir, profile: opts.profile });
-  const snapshotDir = resolveSnapshotDir({ dataDir, profile: opts.profile });
+  const snapshotDir = resolveSnapshotDir({ stateDir, profile: opts.profile });
   const logPath = resolveMonitorLogPath({ stateDir, profile: opts.profile });
 
   if (opts.rollback !== undefined) {

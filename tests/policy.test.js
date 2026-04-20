@@ -16,6 +16,7 @@ import {
   rollbackPolicy,
   validatePolicy,
   resolveProfileName,
+  resolveStateKey,
   defaultPolicyForProfile,
   assertExtendsImmutable,
   additionsToPatch,
@@ -24,16 +25,33 @@ import {
 } from "../src/policy.js";
 
 describe("resolvePolicyPath", () => {
-  it("resolves to <configDir>/sence/<profile>/fence.json", () => {
-    const path = resolvePolicyPath({ configDir: "/home/user/.config", profile: "default" });
-    assert.equal(path, "/home/user/.config/sence/default/fence.json");
+  it("resolves to <configDir>/sence/<profile>/fence.json for 2-component profile", () => {
+    const path = resolvePolicyPath({ configDir: "/home/user/.config", profile: "default:default" });
+    assert.equal(path, "/home/user/.config/sence/default:default/fence.json");
+  });
+
+  it("resolves to <config-dir>/fence.json (flat) for 3-component profile", () => {
+    const path = resolvePolicyPath({ configDir: "/home/user/.config", profile: "code:foo:/tmp/ws" });
+    assert.equal(path, "/tmp/ws/fence.json");
+  });
+
+  it("throws if 3-component config-dir is not absolute (caller must resolveProfileName first)", () => {
+    assert.throws(
+      () => resolvePolicyPath({ configDir: "/home/user/.config", profile: "code:foo:./ws" }),
+      /not absolute/,
+    );
   });
 });
 
 describe("resolveSnapshotDir", () => {
-  it("resolves to <dataDir>/sence/<profile>/snapshots", () => {
-    const path = resolveSnapshotDir({ dataDir: "/home/user/.local/share", profile: "default" });
-    assert.equal(path, "/home/user/.local/share/sence/default/snapshots");
+  it("resolves to <stateDir>/sence/<profile>/snapshots for 2-component profile", () => {
+    const path = resolveSnapshotDir({ stateDir: "/home/user/.local/state", profile: "default:default" });
+    assert.equal(path, "/home/user/.local/state/sence/default:default/snapshots");
+  });
+
+  it("uses the derived state key for 3-component profile", () => {
+    const path = resolveSnapshotDir({ stateDir: "/home/user/.local/state", profile: "code:build:/Users/toqoz/src/foo" });
+    assert.equal(path, "/home/user/.local/state/sence/code-build--Users-toqoz-src-foo/snapshots");
   });
 });
 
@@ -179,7 +197,7 @@ describe("rollback", () => {
 });
 
 describe("resolveProfileName", () => {
-  it("passes through names containing colon", () => {
+  it("passes through 2-component profiles", () => {
     assert.equal(resolveProfileName("code:npm-i"), "code:npm-i");
     assert.equal(resolveProfileName("code-strict:build"), "code-strict:build");
     assert.equal(resolveProfileName("default:myproj"), "default:myproj");
@@ -189,6 +207,52 @@ describe("resolveProfileName", () => {
     assert.equal(resolveProfileName("default"), "default:default");
     assert.equal(resolveProfileName("strict"), "default:strict");
     assert.equal(resolveProfileName("my-project"), "default:my-project");
+  });
+
+  it("absolutizes config-dir in 3-component profile against cwd", () => {
+    const r = resolveProfileName("code:foo:.");
+    assert.equal(r, `code:foo:${process.cwd()}`);
+  });
+
+  it("keeps an absolute config-dir as-is", () => {
+    assert.equal(resolveProfileName("code:foo:/tmp/ws"), "code:foo:/tmp/ws");
+  });
+
+  it("rejects an empty config-dir", () => {
+    assert.throws(() => resolveProfileName("code:foo:"), /empty config-dir/);
+  });
+
+  it("stable across different cwds for an absolute config-dir", () => {
+    const before = process.cwd();
+    try {
+      process.chdir("/");
+      const fromRoot = resolveProfileName("code:foo:/tmp/ws");
+      process.chdir(before);
+      const fromOriginal = resolveProfileName("code:foo:/tmp/ws");
+      assert.equal(fromRoot, fromOriginal);
+    } finally {
+      process.chdir(before);
+    }
+  });
+});
+
+describe("resolveStateKey", () => {
+  it("returns the profile string for 2-component profiles", () => {
+    assert.equal(resolveStateKey("default:default"), "default:default");
+    assert.equal(resolveStateKey("code:foo"), "code:foo");
+  });
+
+  it("derives <template>-<name>-<abs-path-with-/-to--> for 3-component", () => {
+    assert.equal(
+      resolveStateKey("code:build:/Users/toqoz/src/foo"),
+      "code-build--Users-toqoz-src-foo",
+    );
+  });
+
+  it("two different config-dirs produce different keys", () => {
+    const a = resolveStateKey("code:foo:/tmp/a");
+    const b = resolveStateKey("code:foo:/tmp/b");
+    assert.notEqual(a, b);
   });
 });
 

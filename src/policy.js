@@ -1,17 +1,30 @@
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, renameSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, isAbsolute, resolve } from "node:path";
 import { CREDENTIAL_PATTERNS } from "./patterns.js";
 
 // Resolve the canonical profile name.
-// "<template>:<name>" → as-is
-// "<name>"            → "default:<name>"
+// "<name>"                        → "default:<name>"
+// "<template>:<name>"             → as-is
+// "<template>:<name>:<config-dir>" → "<template>:<name>:<abs(config-dir)>"
+//
+// The third field, when present, relocates fence.json to a caller-chosen
+// directory (e.g. ":." for workspace-local config). It is absolutized against
+// process.cwd() at parse time so later resolution is independent of cwd drift.
 export function resolveProfileName(profile) {
-  return profile.includes(":") ? profile : `default:${profile}`;
+  const parts = profile.split(":");
+  if (parts.length === 1) return `default:${profile}`;
+  if (parts.length === 2) return profile;
+  const [template, name, ...rest] = parts;
+  const configDir = rest.join(":");
+  if (configDir === "") {
+    throw new Error(`empty config-dir in --profile: "${profile}"`);
+  }
+  return `${template}:${name}:${resolve(configDir)}`;
 }
 
 // Return the initial policy for a canonical profile name.
-// "default:<name>"    → {} (empty policy)
-// "<template>:<name>" → { extends: "<template>" }
+// "default:<name>[:<dir>]"    → {} (empty policy)
+// "<template>:<name>[:<dir>]" → { extends: "<template>" }
 export function defaultPolicyForProfile(profile) {
   const template = profile.split(":")[0];
   if (template === "default") return {};
@@ -24,12 +37,39 @@ export function defaultPolicyForProfile(profile) {
   return { extends: template };
 }
 
+// Derive the directory key used for sence-managed runtime state (snapshots
+// and monitor log) under $XDG_STATE_HOME.
+//
+// 2-component profile    → the profile string itself ("code:foo")
+// 3-component profile    → "<template>-<name>-<abs-path-with-/-replaced-by-->"
+//                          so two runs with the same template:name but
+//                          different config-dirs never collide.
+export function resolveStateKey(profile) {
+  const parts = profile.split(":");
+  if (parts.length <= 2) return profile;
+  const [template, name, ...rest] = parts;
+  const absDir = rest.join(":");
+  return `${template}-${name}-${absDir.replaceAll("/", "-")}`;
+}
+
+// Resolve the fence.json path.
+//
+// 2-component profile    → <configDir>/sence/<profile>/fence.json
+// 3-component profile    → <abs-config-dir>/fence.json (flat, workspace-local)
 export function resolvePolicyPath({ configDir, profile = "default" }) {
+  const parts = profile.split(":");
+  if (parts.length >= 3) {
+    const absDir = parts.slice(2).join(":");
+    if (!isAbsolute(absDir)) {
+      throw new Error(`config-dir is not absolute in profile: "${profile}" — call resolveProfileName first`);
+    }
+    return join(absDir, "fence.json");
+  }
   return join(configDir, "sence", profile, "fence.json");
 }
 
-export function resolveSnapshotDir({ dataDir, profile = "default" }) {
-  return join(dataDir, "sence", profile, "snapshots");
+export function resolveSnapshotDir({ stateDir, profile = "default" }) {
+  return join(stateDir, "sence", resolveStateKey(profile), "snapshots");
 }
 
 export function readPolicy(path) {

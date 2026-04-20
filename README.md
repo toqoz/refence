@@ -103,6 +103,19 @@ independently.
 Profiles without `:` (e.g. `--profile myproj`) are shorthand for
 `default:<name>` — they also start from an empty policy.
 
+### Workspace-local config
+
+Append a third field to relocate `fence.json` itself:
+
+    $ sence --profile code:local:. -- npm install           # fence.json in cwd
+    $ sence --profile code:build:./sandbox -- npm run build # fence.json under ./sandbox
+
+The `<config-dir>` is resolved against `process.cwd()` at run time and
+holds `fence.json` flat (no `sence/<profile>/` subdirectory). sence's
+own runtime state — snapshots and monitor log — still lives under
+`$XDG_STATE_HOME/sence/<key>/`, keyed by `<template>-<name>-<abs-path>`
+so two workspaces with the same `<template>:<name>` never collide.
+
 Available fence templates can be listed with:
 
     $ fence --list-templates
@@ -120,7 +133,9 @@ with:
 
     --interactive         interactive agent mode (real-time denial monitoring)
     --profile <name>      policy profile (default: default)
-                          use <template>:<name> to start from a fence template
+                          <name>                        → default:<name>
+                          <template>:<name>             → start from a fence template
+                          <template>:<name>:<config-dir> → fence.json at <config-dir>/fence.json
     --model <name>        LLM model for policy suggestions (default: gpt-5.4-mini)
     --patch <file>        apply a policy patch before running
     --rollback [STEP]     rollback to a previous policy snapshot (default: 1)
@@ -132,7 +147,10 @@ with:
 ## Policy
 
 Policies live in `$XDG_CONFIG_HOME/sence/<profile>/fence.json`.
-Snapshots are kept in `$XDG_DATA_HOME/sence/<profile>/snapshots/`.
+Snapshots are kept in `$XDG_STATE_HOME/sence/<key>/snapshots/`.
+(With a workspace-local profile, `fence.json` moves to
+`<config-dir>/fence.json` but snapshots and logs stay under
+`$XDG_STATE_HOME`.)
 
 The default profile (`default:default`) starts with an empty policy
 `{}`. Use `--profile <template>:<name>` to start from a fence template.
