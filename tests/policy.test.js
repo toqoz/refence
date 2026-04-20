@@ -11,6 +11,7 @@ import {
   writePolicy,
   diffPolicy,
   mergePolicy,
+  stripEmpty,
   listSnapshots,
   rollbackPolicy,
   validatePolicy,
@@ -350,6 +351,48 @@ describe("mergePolicy", () => {
     const patch = { extends: "code-relaxed" };
     const result = mergePolicy(base, patch);
     assert.equal(result.extends, "code-relaxed");
+  });
+});
+
+describe("stripEmpty", () => {
+  it("returns null unchanged", () => {
+    assert.equal(stripEmpty(null), null);
+  });
+
+  it("returns primitives unchanged", () => {
+    assert.equal(stripEmpty(42), 42);
+    assert.equal(stripEmpty("x"), "x");
+    assert.equal(stripEmpty(true), true);
+  });
+
+  it("drops null fields from an object", () => {
+    assert.deepEqual(stripEmpty({ a: null, b: 1 }), { b: 1 });
+  });
+
+  it("drops empty arrays", () => {
+    assert.equal(stripEmpty({ a: [] }), undefined);
+    assert.deepEqual(stripEmpty({ a: [], b: [1] }), { b: [1] });
+  });
+
+  it("preserves non-empty arrays as-is", () => {
+    assert.deepEqual(stripEmpty({ a: [1, 2, 3] }), { a: [1, 2, 3] });
+  });
+
+  it("returns undefined when nested strip leaves an empty object", () => {
+    assert.equal(stripEmpty({ a: { b: null } }), undefined);
+  });
+
+  it("preserves non-empty nested objects", () => {
+    assert.deepEqual(stripEmpty({ a: { b: 1, c: null } }), { a: { b: 1 } });
+  });
+
+  it("drops the fence.json-style null patch sections", () => {
+    const patch = {
+      extends: "code",
+      network: null,
+      filesystem: { allowRead: [], allowWrite: null },
+    };
+    assert.deepEqual(stripEmpty(patch), { extends: "code" });
   });
 });
 
