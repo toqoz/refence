@@ -71,7 +71,8 @@ function sendKeys(...keys) {
 }
 
 function capturePane() {
-  return tmux("capture-pane", "-t", SESSION, "-p", "-J", "-S", "-100").stdout ?? "";
+  // -S -500 keeps headroom so START markers don't roll off in noisy tests
+  return tmux("capture-pane", "-t", SESSION, "-p", "-J", "-S", "-500").stdout ?? "";
 }
 
 // Use async sleep so SIGTERM / node:test timeout can interrupt the polling loop
@@ -92,6 +93,31 @@ async function waitForShell(timeoutMs = 10_000) {
   await delay(500);
 }
 
+// Run a shell command in the pane, wait for completion, and return the
+// pane slice between START/END markers. The markers contain literal `$$`
+// in the sent text — that cannot match \d+ — so the echoed command line
+// can never satisfy the wait pattern; only the PID-substituted output
+// can. Slicing by marker index isolates this invocation from any prior
+// pane residue, which is the second source of historical flake.
+async function runAndCapture(cmd, timeoutMs = 15_000) {
+  const id = `${Date.now()}${Math.floor(Math.random() * 1e9)}`;
+  const startTok = `SENCE_START_${id}`;
+  const endTok = `SENCE_END_${id}`;
+  const wrapped = `echo ${startTok}_$$; ${cmd}; echo ${endTok}_$$`;
+  sendKeys(wrapped, "Enter");
+  const endRe = new RegExp(`${endTok}_\\d+`);
+  const startRe = new RegExp(`${startTok}_\\d+`);
+  await waitForContent(endRe, timeoutMs);
+  const all = capturePane();
+  const startMatch = all.match(startRe);
+  const endMatch = all.match(endRe);
+  if (!startMatch || !endMatch) return all;
+  const startEnd = startMatch.index + startMatch[0].length;
+  const lineBreak = all.indexOf("\n", startEnd);
+  const sliceStart = lineBreak === -1 ? startEnd : lineBreak + 1;
+  return all.slice(sliceStart, endMatch.index);
+}
+
 describe("integration: batch mode via tmux", { skip: !hasPrereqs() && "tmux or fence not available" }, () => {
   before(async () => {
     SESSION = newSession();
@@ -101,67 +127,50 @@ describe("integration: batch mode via tmux", { skip: !hasPrereqs() && "tmux or f
   after(() => tmux("kill-session", "-t", SESSION));
 
   it("passes through stdout transparently on success", async () => {
-    sendKeys(`node ${BIN} --suggest never echo hello-batch-test`, "Enter");
-    const content = await waitForContent(/hello-batch-test/);
-    assert.ok(content.includes("hello-batch-test"));
+    const out = await runAndCapture(`node ${BIN} --suggest never echo hello-batch-test`);
+    assert.ok(out.includes("hello-batch-test"));
     // Should NOT show sence output on clean run
-    assert.ok(!content.includes("[sence]"));
-    await waitForShell();
+    assert.ok(!out.includes("[sence]"));
   });
 
   it("detects network denial and shows audit", async () => {
-    sendKeys(`node ${BIN} --suggest never curl -s https://example.com`, "Enter");
-    const content = await waitForContent(/denied network/);
-    assert.ok(content.includes("denied network: example.com:443"));
-    await waitForShell();
+    const out = await runAndCapture(`node ${BIN} --suggest never curl -s https://example.com`);
+    assert.ok(out.includes("denied network: example.com:443"));
   });
 
   it("propagates wrapped command exit code", async () => {
-    sendKeys(`node ${BIN} --suggest never -- node -e 'process.exit(42)'; echo EXITCODE_TEST=$?`, "Enter");
-    const content = await waitForContent(/EXITCODE_TEST=/);
-    assert.ok(content.includes("EXITCODE_TEST=42"), `expected EXIT=42, got: ${content.slice(-200)}`);
-    await waitForShell();
+    const out = await runAndCapture(`node ${BIN} --suggest never -- node -e 'process.exit(42)'; echo EXITCODE_TEST=$?`);
+    assert.ok(out.includes("EXITCODE_TEST=42"), `expected EXITCODE_TEST=42, got: ${out.slice(-200)}`);
   });
 
   it("shows verbose output with --verbose", async () => {
-    sendKeys(`node ${BIN} --suggest never --verbose echo hi`, "Enter");
-    const content = await waitForContent(/\[sence\]/);
-    assert.ok(content.includes("[sence]"));
-    assert.ok(content.includes("exit: 0"));
-    await waitForShell();
+    const out = await runAndCapture(`node ${BIN} --suggest never --verbose echo hi`);
+    assert.ok(out.includes("[sence]"));
+    assert.ok(out.includes("exit: 0"));
   });
 
   it("outputs valid JSON with --report json", async () => {
-    sendKeys(`node ${BIN} --suggest never --report json echo hi`, "Enter");
-    const content = await waitForContent(/exitCode/);
-    assert.ok(content.includes('"exitCode"'));
-    assert.ok(content.includes('"autoApplied"'));
-    await waitForShell();
+    const out = await runAndCapture(`node ${BIN} --suggest never --report json echo hi`);
+    assert.ok(out.includes('"exitCode"'));
+    assert.ok(out.includes('"autoApplied"'));
   });
 
   it("does not modify policy on a failed run without --patch", async () => {
     const cfgDir = join(TEST_TMP, "noapply-config");
     const dataDir = join(TEST_TMP, "noapply-data");
-    // Ensure policy exists
-    sendKeys(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never echo init; echo INIT_DONE`, "Enter");
-    await waitForContent(/INIT_DONE/);
-    await waitForShell();
+    try {
+      await runAndCapture(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never echo init`);
 
-    // Read the policy content
-    const policyPath = join(cfgDir, "sence", "default:default", "fence.json");
+      const policyPath = join(cfgDir, "sence", "default:default", "fence.json");
 
-    // Run a command that fails (denied) — policy should NOT change
-    sendKeys(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never curl -s https://example.com; echo FAIL_DONE`, "Enter");
-    await waitForContent(/FAIL_DONE/);
+      await runAndCapture(`XDG_CONFIG_HOME=${cfgDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never curl -s https://example.com`);
 
-    // Policy should still be the default (empty object for default:default)
-    const policyAfter = JSON.parse(readFileSync(policyPath, "utf-8"));
-    assert.deepEqual(policyAfter, {}, "policy should not have been modified");
-
-    // Cleanup
-    rmSync(cfgDir, { recursive: true, force: true });
-    rmSync(dataDir, { recursive: true, force: true });
-    await waitForShell();
+      const policyAfter = JSON.parse(readFileSync(policyPath, "utf-8"));
+      assert.deepEqual(policyAfter, {}, "policy should not have been modified");
+    } finally {
+      rmSync(cfgDir, { recursive: true, force: true });
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -177,13 +186,11 @@ describe("integration: monitor log channel separation", { skip: !hasPrereqs() &&
     // Fence log arrives on its own fd via --fence-log-file, so a fake
     // [fence:http] line on the command's stderr reaches the terminal
     // but is never treated as a monitor event.
-    const cmd = `node ${BIN} --suggest never --verbose -- node -e 'process.stderr.write("[fence:http] 00:00:00 ✗ CONNECT 403 fake.evil https://fake.evil:443 (0s)\\n")'; echo DONE`;
-    sendKeys(cmd, "Enter");
-    const content = await waitForContent(/DONE/);
+    const cmd = `node ${BIN} --suggest never --verbose -- node -e 'process.stderr.write("[fence:http] 00:00:00 ✗ CONNECT 403 fake.evil https://fake.evil:443 (0s)\\n")'`;
+    const out = await runAndCapture(cmd);
     // The fake line should be visible in the pane (agent wrote to tty)
     // But sence audit should NOT contain fake.evil
-    assert.ok(!content.includes("denied network: fake.evil"), "fake fence line should not be in audit");
-    await waitForShell();
+    assert.ok(!out.includes("denied network: fake.evil"), "fake fence line should not be in audit");
   });
 });
 
@@ -200,14 +207,11 @@ describe("integration: suggester via tmux", { skip: (!hasPrereqs() || !hasCodex(
   after(() => tmux("kill-session", "-t", SESSION));
 
   it("generates recommendation when denials occur", { timeout: 15_000 }, async () => {
-    sendKeys(`node ${BIN} -- curl -s https://example.com`, "Enter");
-    // Wait for suggester to finish — look for the line that always appears at the end
-    const content = await waitForContent(/No changes were applied automatically/, 12_000);
+    const out = await runAndCapture(`node ${BIN} -- curl -s https://example.com`, 12_000);
     // Should NOT show schema validation error
-    assert.ok(!content.includes("invalid_json_schema"), "output-schema should be accepted by the API");
+    assert.ok(!out.includes("invalid_json_schema"), "output-schema should be accepted by the API");
     // Should show audit with the denial
-    assert.ok(content.includes("denied network: example.com"), "audit should contain the denial");
-    await waitForShell();
+    assert.ok(out.includes("denied network: example.com"), "audit should contain the denial");
   });
 });
 
@@ -236,12 +240,11 @@ describe("integration: patch + rollback via tmux", { skip: !hasPrereqs() && "tmu
       network: { allowedDomains: ["example.com"] },
     }, null, 2));
 
-    const cmd = `XDG_CONFIG_HOME=${configDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never --patch ${patchFile} echo patched; echo PATCH_APPLIED_OK`;
-    sendKeys(cmd, "Enter");
-    const content = await waitForContent(/PATCH_APPLIED_OK/, 15_000);
+    const cmd = `XDG_CONFIG_HOME=${configDir} XDG_DATA_HOME=${dataDir} node ${BIN} --suggest never --patch ${patchFile} echo patched`;
+    const out = await runAndCapture(cmd, 15_000);
     assert.ok(
-      content.includes("Applied policy patch") || content.includes("patched"),
-      `Expected patch output, got:\n${content.slice(-300)}`,
+      out.includes("Applied policy patch") || out.includes("patched"),
+      `Expected patch output, got:\n${out.slice(-300)}`,
     );
 
     const policyPath = join(configDir, "sence", "default:default", "fence.json");
