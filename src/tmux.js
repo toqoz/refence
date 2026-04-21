@@ -12,12 +12,6 @@ export function currentPane() {
   return result.status === 0 ? result.stdout.trim() : null;
 }
 
-export function sendEscape(pane) {
-  if (!pane) return false;
-  const result = spawnSync("tmux", ["send-keys", "-t", pane, "Escape"]);
-  return result.status === 0;
-}
-
 export function capturePaneContent(pane, { lines = 300 } = {}) {
   if (!pane) return "";
   const result = spawnSync(
@@ -28,30 +22,31 @@ export function capturePaneContent(pane, { lines = 300 } = {}) {
   return result.status === 0 ? result.stdout : "";
 }
 
-export function displayPopup({ width = "80%", height = "60%", command }) {
-  if (!isInsideTmux()) return false;
+// Split the target pane vertically (new pane below), run `command` in it, and
+// return the new pane's id. Keeps focus on the original pane (-d).
+export function openSplitPane({ target, command, size = "8" }) {
+  if (!isInsideTmux() || !target) return null;
   const result = spawnSync(
     "tmux",
-    ["display-popup", "-w", width, "-h", height, "-E", command],
-    { stdio: "inherit" },
+    [
+      "split-window",
+      "-v",
+      "-l",
+      size,
+      "-d",
+      "-t",
+      target,
+      "-P",
+      "-F",
+      "#{pane_id}",
+      command,
+    ],
+    { encoding: "utf-8" },
   );
-  return result.status === 0;
+  return result.status === 0 ? result.stdout.trim() : null;
 }
 
-export function prefillInput(pane, text) {
-  if (!pane) return false;
-  // send-keys without "Enter" — text appears in the input line but is not executed
-  const result = spawnSync("tmux", ["send-keys", "-t", pane, "-l", text]);
-  return result.status === 0;
-}
-
-export function supportsPopup() {
-  if (!isInsideTmux()) return false;
-  const result = spawnSync("tmux", ["-V"], { encoding: "utf-8" });
-  if (result.status !== 0) return false;
-  const match = result.stdout.match(/(\d+)\.(\d+)/);
-  if (!match) return false;
-  const major = parseInt(match[1], 10);
-  const minor = parseInt(match[2], 10);
-  return major > 3 || (major === 3 && minor >= 2);
+export function killPane(paneId) {
+  if (!paneId) return false;
+  return spawnSync("tmux", ["kill-pane", "-t", paneId]).status === 0;
 }

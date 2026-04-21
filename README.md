@@ -71,19 +71,20 @@ Undo it:
 ### Interactive mode
 
 For coding agents that run interactively (Claude Code, Codex, etc.),
-use `--interactive`. sence monitors sandbox violations in real-time
-and interrupts the agent when access is denied:
+use `--interactive`. sence runs the agent under fence and tails the
+monitor log in a split pane so you can watch denials as they happen:
 
     $ sence --interactive -- claude
 
-When a denial is detected:
+While the agent runs, sence does not interrupt it. When you decide
+the agent is stuck, interrupt it yourself (ESC, Ctrl+C). After the
+agent exits, if any denials were logged, sence:
 
-1. ESC is sent to the agent (graceful interrupt)
-2. The process is killed to apply new sandbox settings
-3. The terminal screen is captured (includes session ID)
-4. An LLM analyzes the violation and proposes a policy change
-5. A tmux popup shows the proposal for approval
-6. If accepted, the resume command is prefilled in your terminal
+1. Captures the pane (often contains the session/resume id)
+2. Prints an audit summary to stderr
+3. Runs the LLM suggester (unless `--suggest never`)
+4. Writes a patch file and prints a `sence --patch … --interactive --
+   <resume>` line for you to copy and run
 
 ## Template profiles
 

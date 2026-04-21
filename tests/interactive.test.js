@@ -45,10 +45,6 @@ function sendKeys(...keys) {
   tmux("send-keys", "-t", SESSION, ...keys);
 }
 
-function sendLiteral(text) {
-  tmux("send-keys", "-t", SESSION, "-l", text);
-}
-
 function capturePane() {
   return tmux("capture-pane", "-t", SESSION, "-p", "-J").stdout;
 }
@@ -68,19 +64,6 @@ function waitForContent(pattern, timeoutMs = 15_000) {
 describe("interactive: tmux helpers", { skip: !hasTmux() && "tmux not available" }, () => {
   before(() => createSession());
   after(() => killSession());
-
-  it("prefillInput places text in pane without executing", () => {
-    sendLiteral("echo should-not-run");
-    sleep(300);
-    const content = capturePane();
-    assert.ok(content.includes("echo should-not-run"), "text should appear in pane");
-    // Verify it was NOT executed (no output line with just "should-not-run")
-    const lines = content.split("\n").map((l) => l.trim());
-    const outputLines = lines.filter((l) => l === "should-not-run");
-    assert.equal(outputLines.length, 0, "command should not have been executed");
-    sendKeys("C-c");
-    sleep(200);
-  });
 
   it("capturePaneContent captures after command output", () => {
     sendKeys("echo capture-test-marker", "Enter");
@@ -115,35 +98,33 @@ function waitForShell(timeoutMs = 10_000) {
   sleep(500);
 }
 
-describe("interactive: sence monitors denial and interrupts mock agent", { skip: (!hasTmux() || !hasFence()) && "tmux or fence not available" }, () => {
+describe("interactive: sence observes denial, user interrupts agent", { skip: (!hasTmux() || !hasFence()) && "tmux or fence not available" }, () => {
   before(() => {
     createSession();
     waitForShell();
   });
   after(() => killSession());
 
-  it("detects denial, sends ESC, kills process, shows audit", () => {
-    // SENCE_INTERVENTION=deny skips the popup and proceeds straight to the
-    // kill (matches the prior behavior these assertions were written against).
-    const cmd = `SENCE_INTERVENTION=deny node ${BIN} --suggest never --interactive -- node ${MOCK_AGENT}`;
+  it("streams log in split pane, and user interrupt yields post-exit audit", () => {
+    const cmd = `node ${BIN} --suggest never --interactive -- node ${MOCK_AGENT}`;
     sendKeys(cmd, "Enter");
 
-    // Wait for the full flow: agent starts → denial → ESC → kill → audit
-    const content = waitForContent(/interrupted by user|Analyzing|Suggester/, 20_000);
+    // Wait until the split pane tail is visible (streams fence denials).
+    waitForContent(/monitor log:/, 15_000);
+
+    // User (test) interrupts the agent with ESC; mock agent prints resume
+    // line and exits cleanly. sence then writes audit to stderr and exits.
+    sendKeys("Escape");
+
+    const content = waitForContent(/Audit summary/, 20_000);
 
     assert.ok(
-      content.includes("interrupted by user") ||
-        content.includes("[sence]"),
-      `Expected agent interruption or sence output, got:\n${content.slice(-500)}`,
+      content.includes("Audit summary"),
+      `Expected sence audit output after agent exit, got:\n${content.slice(-500)}`,
     );
-  });
-
-  it("mock agent shows resume command after ESC", () => {
-    // The previous test's output should still be in the pane
-    const content = capturePane();
     assert.ok(
       content.includes("to resume: mock-agent --resume"),
-      `Expected resume command from mock agent, got:\n${content.slice(-500)}`,
+      `Expected mock agent resume line, got:\n${content.slice(-500)}`,
     );
   });
 });
