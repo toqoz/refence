@@ -426,7 +426,11 @@ describe("integration: suggest → patch → re-run loop", { skip: (!hasFence() 
         encoding: "utf-8", env, timeout: 45_000,
       });
       assert.notEqual(r1.status, 0, "first run should fail due to network denial");
-      const match = r1.stderr.match(/SENCE_PATCH=(\S+)/);
+      // Match the canonical patch-id format (YYYY-MM-DD[-<slug>]-<6 hex>)
+      // rather than \S+, so a future slug containing shell-special chars
+      // (which shellQuote would wrap in single quotes in the re-run hint)
+      // can't bleed quote characters into the captured id.
+      const match = r1.stderr.match(/SENCE_PATCH=(\d{4}-\d{2}-\d{2}-[A-Za-z0-9_-]+)/);
       assert.ok(match, `patch id hint not found in stderr:\n${r1.stderr.slice(-500)}`);
       const patchId = match[1];
 
