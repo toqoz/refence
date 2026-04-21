@@ -4,7 +4,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { buildFenceArgs, teeMonitorLog } from "../executor.js";
-import { audit, isSignificantDenial } from "../auditor.js";
+import { audit, isDenialLine } from "../auditor.js";
 import { callCodex, loadExtendsTemplate } from "../suggester.js";
 import {
   ensurePolicy,
@@ -61,7 +61,16 @@ any entry that violates the safety rules below.
 
 - Cover EVERY denial in the audit. Each \`deniedFiles\` / \`deniedNetwork\`
   entry should produce at least one addition, unless intentionally skipped
-  for safety (note in rationale).
+  for safety (note in rationale). This rule applies to entries tagged
+  \`"significant": false\` too — that flag only means sence has a pattern
+  match that suggests the denial is benign (e.g. editor control sockets
+  under /private/tmp/fence/nvim.*); it is not a reason to drop the entry
+  from consideration.
+- Clipboard / pasteboard access (macOS pbcopy/pbpaste, NSPasteboard, paths
+  or actions mentioning "clipboard" or "pasteboard") is a legitimate need
+  for agents like Claude Code that support image paste. If the audit shows
+  a clipboard-related denial, propose the narrowest filesystem or command
+  addition that unblocks it.
 - Every addition must directly address a denial from the audit above.
   Do NOT propose tightening (extra command.deny, network.deny, etc.) for
   anything that was not denied — the goal is the smallest change to resume
@@ -232,7 +241,7 @@ function runAndCollect({ fenceArgs, logPath }) {
     process.on("SIGTERM", onSignal);
 
     teeMonitorLog(child.stdio[3], (line) => {
-      if (isSignificantDenial(line)) denials.push(line);
+      if (isDenialLine(line)) denials.push(line);
     }, { logPath });
 
     child.on("close", (code, signal) => {
@@ -249,10 +258,12 @@ function runAndCollect({ fenceArgs, logPath }) {
 function formatAuditHeader(auditSummary) {
   const lines = ["[sence] Audit summary:"];
   for (const net of auditSummary.deniedNetwork) {
-    lines.push(`  - denied network: ${net.host}:${net.port}`);
+    const tag = net.significant === false ? " (non-significant)" : "";
+    lines.push(`  - denied network: ${net.host}:${net.port}${tag}`);
   }
   for (const file of auditSummary.deniedFiles) {
-    lines.push(`  - denied file: ${file.path} (${file.action})`);
+    const tag = file.significant === false ? " (non-significant)" : "";
+    lines.push(`  - denied file: ${file.path} (${file.action})${tag}`);
   }
   lines.push("");
   return lines.join("\n");

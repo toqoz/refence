@@ -7,17 +7,23 @@ const FILE_DENIAL_RE =
 const NETWORK_DENIAL_RE =
   /^\[fence:http\]\s+\S+\s+✗\s+CONNECT\s+403\s+(\S+)\s+https?:\/\/\S+:(\d+)/;
 
-// Denials that should NOT trigger ESC+kill of the wrapped agent. Editors
-// such as nvim create a local control socket on startup (e.g. via Ctrl-G in
-// claude, nvim binds /private/tmp/fence/nvim.<user>/.../nvim.<pid>.0).
-// Without this filter, sence would interrupt the agent and kill the editor
-// the moment it opens.
+// Actions that are usually benign noise rather than a blocking denial.
+// Example: editors like nvim bind a local control socket on startup
+// (/private/tmp/fence/nvim.<user>/.../nvim.<pid>.0), which surfaces as
+// `network-bind` but does not stop the agent from working.
+// We still surface these in the audit output so the user can see what fence
+// denied, but tag them as `significant: false` so the display and any
+// downstream heuristics can deprioritize them.
 const BENIGN_DENIAL_ACTIONS = new Set([
   "network-bind",
 ]);
 
+export function isDenialLine(line) {
+  return line.includes("✗");
+}
+
 export function isSignificantDenial(line) {
-  if (!line.includes("✗")) return false;
+  if (!isDenialLine(line)) return false;
   if (line.startsWith("[fence:http]")) return true;
   const m = line.match(FILE_DENIAL_RE);
   if (!m) return true; // unknown shape — be conservative
@@ -80,6 +86,7 @@ export function audit({ exitCode, monitorLog }) {
         action,
         process,
         severity: classifyFileSeverity(path),
+        significant: !BENIGN_DENIAL_ACTIONS.has(action),
       });
       continue;
     }
@@ -91,6 +98,7 @@ export function audit({ exitCode, monitorLog }) {
         host,
         port: parseInt(port, 10),
         severity: "medium",
+        significant: true,
       });
     }
   }

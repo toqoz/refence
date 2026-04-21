@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { audit, isSignificantDenial } from "../src/auditor.js";
+import { audit, isDenialLine, isSignificantDenial } from "../src/auditor.js";
 
 describe("audit", () => {
   it("returns clean summary when no monitor output", () => {
@@ -75,6 +75,25 @@ describe("audit", () => {
     assert.equal(result.deniedFiles[0].severity, "medium");
   });
 
+  it("tags file denials with significant flag", () => {
+    const log = [
+      "[fence:logstream] 10:00:01 ✗ file-write-create /tmp/out (touch:1)",
+      "[fence:logstream] 22:37:31 ✗ network-bind /private/tmp/fence/nvim.u/x/nvim.9.0 (nvim:9)",
+    ].join("\n");
+    const result = audit({ exitCode: 1, monitorLog: log });
+    assert.equal(result.deniedFiles.length, 2);
+    const byAction = Object.fromEntries(result.deniedFiles.map((f) => [f.action, f]));
+    assert.equal(byAction["file-write-create"].significant, true);
+    assert.equal(byAction["network-bind"].significant, false);
+  });
+
+  it("tags network denials as significant", () => {
+    const log =
+      "[fence:http] 10:00:00 ✗ CONNECT 403 example.com https://example.com:443 (0s)";
+    const result = audit({ exitCode: 1, monitorLog: log });
+    assert.equal(result.deniedNetwork[0].significant, true);
+  });
+
   it("sets status to failed when exit code is non-zero", () => {
     const result = audit({ exitCode: 1, monitorLog: "" });
     assert.equal(result.status, "failed");
@@ -100,6 +119,26 @@ describe("audit", () => {
     const result = audit({ exitCode: 1, monitorLog: log });
     assert.equal(result.deniedNetwork.length, 1);
     assert.equal(result.deniedFiles.length, 0);
+  });
+});
+
+describe("isDenialLine", () => {
+  it("returns true for any ✗ line", () => {
+    assert.equal(
+      isDenialLine("[fence:logstream] 10:00:01 ✗ file-read-data /x (node:1)"),
+      true,
+    );
+    assert.equal(
+      isDenialLine(
+        "[fence:logstream] 22:37:31 ✗ network-bind /private/tmp/fence/nvim.u/x/nvim.9.0 (nvim:9)",
+      ),
+      true,
+    );
+  });
+
+  it("returns false for non-denial lines", () => {
+    assert.equal(isDenialLine("[fence] Command: npm install"), false);
+    assert.equal(isDenialLine(""), false);
   });
 });
 
