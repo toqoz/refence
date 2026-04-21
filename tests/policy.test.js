@@ -634,6 +634,25 @@ describe("diffPolicy", () => {
     const diff = diffPolicy(before, after);
     assert.ok(diff.includes("registry.npmjs.org"));
   });
+
+  // Regression: the previous implementation compared lines by index, so
+  // inserting one entry into an array caused every trailing line (closing
+  // brackets and braces) to render as delete+add noise. A proper LCS diff
+  // should leave them as unchanged context.
+  it("keeps unchanged trailing lines as context when appending an array entry", () => {
+    const before = { macos: { mach: { allowLookup: ["com.apple.a", "com.apple.b"] } } };
+    const after = { macos: { mach: { allowLookup: ["com.apple.a", "com.apple.b", "com.apple.c"] } } };
+    const diff = diffPolicy(before, after);
+    // Only the comma-added line and the new entry should be marked.
+    const removed = diff.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---"));
+    const added = diff.split("\n").filter((l) => l.startsWith("+") && !l.startsWith("+++"));
+    assert.deepEqual(removed, ['-        "com.apple.b"']);
+    assert.deepEqual(added, ['+        "com.apple.b",', '+        "com.apple.c"']);
+    // Closing brackets/braces must remain unchanged context, not re-added.
+    assert.ok(diff.includes('       ]'));
+    assert.ok(!diff.includes('+      ]'));
+    assert.ok(!diff.includes('-      ]'));
+  });
 });
 
 describe("normalizeAdditionValue", () => {

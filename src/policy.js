@@ -452,41 +452,98 @@ export function diffPolicy(before, after) {
   const a = JSON.stringify(before, null, 2);
   const b = JSON.stringify(after, null, 2);
   if (a === b) return "";
+  return unifiedDiff(a.split("\n"), b.split("\n"), "a/fence.json", "b/fence.json");
+}
 
-  const aLines = a.split("\n");
-  const bLines = b.split("\n");
+// Unified diff with 3 lines of context. Uses LCS backtracking so inserted or
+// removed lines don't force every subsequent line to be marked as changed.
+function unifiedDiff(aLines, bLines, aLabel, bLabel, context = 3) {
+  const ops = lcsDiff(aLines, bLines);
+  if (!ops.some((o) => o.type !== "eq")) return "";
 
-  const lines = [];
-  lines.push("--- a/fence.json");
-  lines.push("+++ b/fence.json");
-
-  const maxLen = Math.max(aLines.length, bLines.length);
-  let chunkStart = -1;
-  let chunkA = [];
-  let chunkB = [];
-
-  const flushChunk = () => {
-    if (chunkA.length === 0 && chunkB.length === 0) return;
-    lines.push(`@@ -${chunkStart + 1},${chunkA.length} +${chunkStart + 1},${chunkB.length} @@`);
-    for (const l of chunkA) lines.push(`-${l}`);
-    for (const l of chunkB) lines.push(`+${l}`);
-    chunkA = [];
-    chunkB = [];
-    chunkStart = -1;
-  };
-
-  for (let i = 0; i < maxLen; i++) {
-    const al = i < aLines.length ? aLines[i] : undefined;
-    const bl = i < bLines.length ? bLines[i] : undefined;
-    if (al === bl) {
-      flushChunk();
-    } else {
-      if (chunkStart === -1) chunkStart = i;
-      if (al !== undefined) chunkA.push(al);
-      if (bl !== undefined) chunkB.push(bl);
+  // Group change ops into hunks, merging groups that are ≤ 2*context eqs apart
+  // so their context windows overlap rather than producing adjacent hunks.
+  const changeIdx = [];
+  for (let i = 0; i < ops.length; i++) if (ops[i].type !== "eq") changeIdx.push(i);
+  const groups = [];
+  let gs = changeIdx[0];
+  let ge = changeIdx[0];
+  for (let i = 1; i < changeIdx.length; i++) {
+    const idx = changeIdx[i];
+    if (idx - ge <= 2 * context + 1) ge = idx;
+    else {
+      groups.push([gs, ge]);
+      gs = idx;
+      ge = idx;
     }
   }
-  flushChunk();
+  groups.push([gs, ge]);
 
-  return lines.join("\n");
+  const out = [`--- ${aLabel}`, `+++ ${bLabel}`];
+  for (const [cs, ce] of groups) {
+    const hs = Math.max(0, cs - context);
+    const he = Math.min(ops.length - 1, ce + context);
+    let aLine = 1;
+    let bLine = 1;
+    for (let k = 0; k < hs; k++) {
+      if (ops[k].type !== "add") aLine++;
+      if (ops[k].type !== "del") bLine++;
+    }
+    const body = [];
+    let aCount = 0;
+    let bCount = 0;
+    for (let k = hs; k <= he; k++) {
+      const o = ops[k];
+      if (o.type === "eq") {
+        body.push(` ${o.line}`);
+        aCount++;
+        bCount++;
+      } else if (o.type === "del") {
+        body.push(`-${o.line}`);
+        aCount++;
+      } else {
+        body.push(`+${o.line}`);
+        bCount++;
+      }
+    }
+    // Unified diff convention: when the side has zero lines, its start is the
+    // line *before* which the hunk applies (so emit 0 rather than 1).
+    const aStart = aCount === 0 ? aLine - 1 : aLine;
+    const bStart = bCount === 0 ? bLine - 1 : bLine;
+    out.push(`@@ -${aStart},${aCount} +${bStart},${bCount} @@`);
+    out.push(...body);
+  }
+  return out.join("\n");
+}
+
+function lcsDiff(a, b) {
+  const m = a.length;
+  const n = b.length;
+  // dp[i][j] = LCS length of a[i..] and b[j..]. Row-major Int32 keeps memory
+  // bounded for reasonably sized fence.json files.
+  const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const ops = [];
+  let i = 0;
+  let j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      ops.push({ type: "eq", line: a[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ type: "del", line: a[i] });
+      i++;
+    } else {
+      ops.push({ type: "add", line: b[j] });
+      j++;
+    }
+  }
+  while (i < m) ops.push({ type: "del", line: a[i++] });
+  while (j < n) ops.push({ type: "add", line: b[j++] });
+  return ops;
 }
