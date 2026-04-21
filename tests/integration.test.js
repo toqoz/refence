@@ -247,7 +247,8 @@ async function runAndCapture(cmd, timeoutMs = 15_000) {
   const id = `${Date.now()}${Math.floor(Math.random() * 1e9)}`;
   const startTok = `SENCE_START_${id}`;
   const endTok = `SENCE_END_${id}`;
-  const wrapped = `echo ${startTok}_$$; ${cmd}; echo ${endTok}_$$`;
+  // Leading space → HIST_IGNORE_SPACE keeps the test command out of zsh history.
+  const wrapped = ` echo ${startTok}_$$; ${cmd}; echo ${endTok}_$$`;
   sendKeys(wrapped, "Enter");
   const endRe = new RegExp(`${endTok}_\\d+`);
   const startRe = new RegExp(`${startTok}_\\d+`);

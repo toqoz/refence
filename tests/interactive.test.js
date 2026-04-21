@@ -66,7 +66,8 @@ describe("interactive: tmux helpers", { skip: !hasTmux() && "tmux not available"
   after(() => killSession());
 
   it("capturePaneContent captures after command output", () => {
-    sendKeys("echo capture-test-marker", "Enter");
+    // Leading space → HIST_IGNORE_SPACE keeps the test command out of zsh history.
+    sendKeys(" echo capture-test-marker", "Enter");
     const content = waitForContent(/capture-test-marker/);
     assert.ok(content.includes("capture-test-marker"));
   });
@@ -78,7 +79,8 @@ describe("interactive: mock agent with ESC interrupt", { skip: !hasTmux() && "tm
 
   it("mock agent responds to ESC by printing resume info", () => {
     // Run mock agent directly (no fence) to verify ESC handling works
-    sendKeys(`node ${MOCK_AGENT}`, "Enter");
+    // Leading space → HIST_IGNORE_SPACE keeps the test command out of zsh history.
+    sendKeys(` node ${MOCK_AGENT}`, "Enter");
     sleep(1000);
 
     // Verify agent is running
@@ -106,7 +108,8 @@ describe("interactive: sence observes denial, user interrupts agent", { skip: (!
   after(() => killSession());
 
   it("streams log in split pane, and user interrupt yields post-exit audit", () => {
-    const cmd = `node ${BIN} --suggest never --interactive -- node ${MOCK_AGENT}`;
+    // Leading space → HIST_IGNORE_SPACE keeps the test command out of zsh history.
+    const cmd = ` node ${BIN} --suggest never --interactive -- node ${MOCK_AGENT}`;
     sendKeys(cmd, "Enter");
 
     // Wait until the split pane tail is visible (streams fence denials).
