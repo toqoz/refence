@@ -692,6 +692,16 @@ describe("assessAddition", () => {
     assert.equal(assessAddition({ kind: "network.allow", value: "   " }).block, true);
     assert.equal(assessAddition(null).block, true);
   });
+
+  it("blocks macOS mach wildcard *", () => {
+    assert.equal(assessAddition({ kind: "macos.mach.lookup", value: "*" }).block, true);
+    assert.equal(assessAddition({ kind: "macos.mach.register", value: "*" }).block, true);
+  });
+
+  it("allows narrow macOS mach additions", () => {
+    assert.equal(assessAddition({ kind: "macos.mach.lookup", value: "com.apple.pasteboard.1" }).block, false);
+    assert.equal(assessAddition({ kind: "macos.mach.lookup", value: "org.chromium.*" }).block, false);
+  });
 });
 
 describe("additionsToPatch", () => {
@@ -771,6 +781,49 @@ describe("additionsToPatch", () => {
       { kind: "network.allow", value: "a.com" },
       { kind: "filesystem.allowRead", value: "./src" },
     ], { templateEntries });
+    assert.deepEqual(patch, {});
+  });
+
+  it("writes 3-level paths for macOS mach additions", () => {
+    const patch = additionsToPatch({}, [
+      { kind: "macos.mach.lookup", value: "com.apple.pasteboard.1" },
+      { kind: "macos.mach.register", value: "com.apple.example" },
+    ]);
+    assert.deepEqual(patch, {
+      macos: {
+        mach: {
+          lookup: ["com.apple.pasteboard.1"],
+          register: ["com.apple.example"],
+        },
+      },
+    });
+  });
+
+  it("unions macOS mach additions with existing entries", () => {
+    const current = {
+      macos: { mach: { lookup: ["com.apple.diagnosticd"] } },
+    };
+    const patch = additionsToPatch(current, [
+      { kind: "macos.mach.lookup", value: "com.apple.pasteboard.1" },
+    ]);
+    assert.deepEqual(patch.macos.mach.lookup, [
+      "com.apple.diagnosticd",
+      "com.apple.pasteboard.1",
+    ]);
+    const merged = mergePolicy(current, patch);
+    assert.deepEqual(merged.macos.mach.lookup, [
+      "com.apple.diagnosticd",
+      "com.apple.pasteboard.1",
+    ]);
+  });
+
+  it("dedupes macOS mach additions against existing entries", () => {
+    const current = {
+      macos: { mach: { lookup: ["com.apple.diagnosticd"] } },
+    };
+    const patch = additionsToPatch(current, [
+      { kind: "macos.mach.lookup", value: "com.apple.diagnosticd" },
+    ]);
     assert.deepEqual(patch, {});
   });
 });

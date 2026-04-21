@@ -233,7 +233,8 @@ const DANGEROUS_GLOB_PATTERNS = [
   /^\/Users\/[^/]+\/\*\*?$/, // /Users/user/** or /Users/user/*
 ];
 
-// Addition kinds map to a [section, field] path inside fence.json.
+// Addition kinds map to a path inside fence.json. Paths can be any depth
+// (the macOS mach keys live one level deeper than network/filesystem/command).
 // Keep this list aligned with the suggester schema enum.
 export const ADDITION_KIND_PATH = {
   "network.allow":         ["network", "allowedDomains"],
@@ -243,20 +244,31 @@ export const ADDITION_KIND_PATH = {
   "filesystem.allowWrite": ["filesystem", "allowWrite"],
   "filesystem.denyWrite":  ["filesystem", "denyWrite"],
   "command.deny":          ["command", "deny"],
+  "macos.mach.lookup":     ["macos", "mach", "lookup"],
+  "macos.mach.register":   ["macos", "mach", "register"],
 };
 
 const NETWORK_KINDS = new Set(["network.allow", "network.deny"]);
+const MACH_KINDS = new Set(["macos.mach.lookup", "macos.mach.register"]);
 
-function getArrayAt(obj, [a, b]) {
-  const section = obj?.[a];
-  if (!section || typeof section !== "object") return [];
-  const field = section[b];
+function getArrayAt(obj, path) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    cur = cur?.[path[i]];
+    if (!cur || typeof cur !== "object") return [];
+  }
+  const field = cur?.[path[path.length - 1]];
   return Array.isArray(field) ? field : [];
 }
 
-function setArrayAt(obj, [a, b], arr) {
-  if (!obj[a] || typeof obj[a] !== "object") obj[a] = {};
-  obj[a][b] = arr;
+function setArrayAt(obj, path, arr) {
+  let cur = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    const k = path[i];
+    if (!cur[k] || typeof cur[k] !== "object") cur[k] = {};
+    cur = cur[k];
+  }
+  cur[path[path.length - 1]] = arr;
 }
 
 // Canonicalize an addition value for comparison only. The returned value is
@@ -288,6 +300,9 @@ export function assessAddition(addition) {
   const normalized = normalizeAdditionValue(kind, value);
   if (kind === "network.allow" && normalized === "*") {
     return { block: true, reason: 'wildcard "*" allows all egress' };
+  }
+  if (MACH_KINDS.has(kind) && normalized === "*") {
+    return { block: true, reason: 'wildcard "*" allows all mach services' };
   }
   if (kind === "filesystem.allowRead" || kind === "filesystem.allowWrite") {
     for (const pattern of CREDENTIAL_PATTERNS) {

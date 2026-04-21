@@ -21,7 +21,9 @@
               "filesystem.denyRead",
               "filesystem.allowWrite",
               "filesystem.denyWrite",
-              "command.deny"
+              "command.deny",
+              "macos.mach.lookup",
+              "macos.mach.register"
             ]
           },
           "value": {
