@@ -1,20 +1,17 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
-import { isDenialLine, isSignificantDenial } from "../auditor.js";
+import { isDenialLine } from "../auditor.js";
 
 const RED = "\x1b[31m";
-const YELLOW = "\x1b[33m";
 const RESET = "\x1b[0m";
 
-// Color ✗ lines so the tail pane in interactive mode visually separates
-// blocking denials (red) from benign/non-significant noise (yellow) while
-// leaving informational fence output untouched.
+// Paint every ✗ denial red so the tail pane in interactive mode makes
+// blocked operations stand out against fence's informational output.
 export function colorizeMonitorLine(line, { color = true } = {}) {
   if (!color) return line;
   if (!isDenialLine(line)) return line;
-  if (isSignificantDenial(line)) return `${RED}${line}${RESET}`;
-  return `${YELLOW}${line}${RESET}`;
+  return `${RED}${line}${RESET}`;
 }
 
 export function runTailMode(path) {

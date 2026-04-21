@@ -61,11 +61,7 @@ any entry that violates the safety rules below.
 
 - Cover EVERY denial in the audit. Each \`deniedFiles\` / \`deniedNetwork\`
   entry should produce at least one addition, unless intentionally skipped
-  for safety (note in rationale). This rule applies to entries tagged
-  \`"significant": false\` too — that flag only means sence has a pattern
-  match that suggests the denial is benign (e.g. editor control sockets
-  under /private/tmp/fence/nvim.*); it is not a reason to drop the entry
-  from consideration.
+  for safety (note in rationale).
 - Clipboard / pasteboard access (macOS pbcopy/pbpaste, NSPasteboard, paths
   or actions mentioning "clipboard" or "pasteboard") is a legitimate need
   for agents like Claude Code that support image paste. If the audit shows
@@ -260,12 +256,10 @@ function runAndCollect({ fenceArgs, logPath }) {
 function formatAuditHeader(auditSummary) {
   const lines = ["[sence] Audit summary:"];
   for (const net of auditSummary.deniedNetwork) {
-    const tag = net.significant === false ? " (non-significant)" : "";
-    lines.push(`  - denied network: ${net.host}:${net.port}${tag}`);
+    lines.push(`  - denied network: ${net.host}:${net.port}`);
   }
   for (const file of auditSummary.deniedFiles) {
-    const tag = file.significant === false ? " (non-significant)" : "";
-    lines.push(`  - denied file: ${file.path} (${file.action})${tag}`);
+    lines.push(`  - denied file: ${file.path} (${file.action})`);
   }
   lines.push("");
   return lines.join("\n");
