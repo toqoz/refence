@@ -159,6 +159,44 @@ describe("integration: CLI safety and lifecycle", () => {
       rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  // Regression: --patch used to be silently ignored when combined with
+  // --interactive because the cli.js interactive branch returned early,
+  // before the --patch block ran. The patch must be merged into fence.json
+  // before runInteractiveMode is reached so fence actually honors it.
+  it("applies --patch before --interactive exits for missing tmux", () => {
+    const tmp = mkdtempSync(join(TEST_TMP, "patch-interactive-"));
+    try {
+      const cacheDir = join(tmp, "cache");
+      const id = seedPatch(cacheDir, "interactive-patch", {
+        network: { allowedDomains: ["example.com"] },
+      });
+      const r = run(["--interactive", "--patch", id, "--", "echo", "x"], {
+        XDG_CONFIG_HOME: join(tmp, "config"),
+        XDG_DATA_HOME: join(tmp, "data"),
+        XDG_STATE_HOME: join(tmp, "state"),
+        XDG_CACHE_HOME: cacheDir,
+        TMUX: "",
+      });
+      // Without tmux, --interactive fails with exit 2 — but the patch must
+      // have been applied before that check runs.
+      assert.equal(r.status, 2);
+      assert.ok(
+        r.stderr.includes("--interactive requires tmux"),
+        `expected tmux error, got stderr:\n${r.stderr}`,
+      );
+      const policyPath = join(tmp, "config", "sence", "default:default", "fence.json");
+      assert.ok(existsSync(policyPath), `policy file should exist at ${policyPath}`);
+      const policy = JSON.parse(readFileSync(policyPath, "utf-8"));
+      assert.deepEqual(
+        policy,
+        { network: { allowedDomains: ["example.com"] } },
+        `patch should have been merged into fence.json, got: ${JSON.stringify(policy)}`,
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 // Tests that need tmux + fence

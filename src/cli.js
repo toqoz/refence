@@ -287,20 +287,6 @@ export async function run(argv) {
     process.exit(0);
   }
 
-  if (opts.interactive) {
-    await runInteractiveMode({
-      command: opts.command,
-      policyPath,
-      snapshotDir,
-      getPatchDir,
-      profile: opts.profile,
-      suggest: opts.suggest,
-      model: opts.model,
-      logPath,
-    });
-    return;
-  }
-
   let initPolicy;
   try {
     initPolicy = defaultPolicyForProfile(opts.profile);
@@ -352,6 +338,20 @@ export async function run(argv) {
       process.stderr.write(`[sence] Failed to apply patch ${opts.patch} (${patchPath}): ${err.message}\n`);
       process.exit(2);
     }
+  }
+
+  if (opts.interactive) {
+    await runInteractiveMode({
+      command: opts.command,
+      policyPath,
+      snapshotDir,
+      getPatchDir,
+      profile: opts.profile,
+      suggest: opts.suggest,
+      model: opts.model,
+      logPath,
+    });
+    return;
   }
 
   const execResult = await execute({
