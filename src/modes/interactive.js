@@ -62,11 +62,13 @@ any entry that violates the safety rules below.
 - Cover EVERY denial in the audit. Each \`deniedFiles\` / \`deniedNetwork\`
   entry should produce at least one addition, unless intentionally skipped
   for safety (note in rationale).
-- Clipboard / pasteboard access (macOS pbcopy/pbpaste, NSPasteboard, paths
-  or actions mentioning "clipboard" or "pasteboard") is a legitimate need
-  for agents like Claude Code that support image paste. If the audit shows
-  a clipboard-related denial, propose the narrowest filesystem or command
-  addition that unblocks it.
+- Clipboard / pasteboard access (macOS pbcopy/pbpaste, NSPasteboard) is a
+  legitimate need for agents like Claude Code that support image paste.
+  When the audit shows a clipboard-related denial, use the denial's
+  \`action\` to pick the policy key — see the "denial action → policy key"
+  table in the cheatsheet. In particular, \`mach-lookup\` / \`mach-register\`
+  denials must be addressed with \`macos.mach.lookup\` / \`macos.mach.register\`
+  additions, not with filesystem or command entries.
 - Every addition must directly address a denial from the audit above.
   Do NOT propose tightening (extra command.deny, network.deny, etc.) for
   anything that was not denied — the goal is the smallest change to resume
