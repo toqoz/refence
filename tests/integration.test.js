@@ -51,6 +51,12 @@ describe("integration: CLI basics", () => {
     assert.ok(r.stdout.includes("--interactive"));
   });
 
+  it("prints version with --version", () => {
+    const r = sence(["--version"]);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /^\d+\.\d+\.\d+/);
+  });
+
   it("shows error when no command given", () => {
     const r = sence([]);
     assert.equal(r.status, 2);

@@ -58,6 +58,12 @@ describe("parseArgs", () => {
     assert.equal(result.error, null);
   });
 
+  it("parses --version flag", () => {
+    const result = parseArgs(["--version"]);
+    assert.equal(result.version, true);
+    assert.equal(result.error, null);
+  });
+
   it("returns error when no command given", () => {
     const result = parseArgs([]);
     assert.ok(result.error);

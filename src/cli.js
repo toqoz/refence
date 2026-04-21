@@ -6,7 +6,12 @@ import { formatText, formatJson } from "./reporter.js";
 import { resolvePolicyPath, resolveSnapshotDir, resolvePatchDir, resolvePatchPath, writePatchToCache, ensurePolicy, writePolicy, diffPolicy, rollbackPolicy, validatePolicy, mergePolicy, stripNulls, resolveProfileName, resolveStateKey, defaultPolicyForProfile, assertExtendsImmutable, additionsToPatch, assessAddition } from "./policy.js";
 import { runInteractiveMode } from "./modes/interactive.js";
 import { runTailMode } from "./modes/tail.js";
-import { basename, delimiter, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve as resolvePath } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PACKAGE_JSON = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
+const VERSION = PACKAGE_JSON.version;
 
 const HELP_TEXT = `Usage: sence [options] [--] <command...>
        sence --interactive -- <agent-command...>
@@ -30,6 +35,7 @@ Options:
   --suggest auto|never         When to generate advice (default: auto)
   --report text|json           Output format for audit report (default: text)
   --verbose                    Always show sence audit output
+  --version                    Print sence version and exit
   --help                       Show this help message
 
 Examples:
@@ -44,7 +50,7 @@ Examples:
 `;
 
 const FLAG_WITH_VALUE = new Set(["--suggest", "--report", "--profile", "--patch", "--model", "--tail"]);
-const BOOLEAN_FLAGS = new Set(["--verbose", "--help", "--interactive"]);
+const BOOLEAN_FLAGS = new Set(["--verbose", "--help", "--version", "--interactive"]);
 
 export function parseArgs(argv) {
   const opts = {
@@ -58,6 +64,7 @@ export function parseArgs(argv) {
     interactive: false,
     verbose: false,
     help: false,
+    version: false,
     command: [],
     error: null,
   };
@@ -104,6 +111,7 @@ export function parseArgs(argv) {
   }
 
   if (opts.help) return opts;
+  if (opts.version) return opts;
   if (opts.rollback !== undefined) return opts;
   if (opts.tail !== undefined) return opts;
 
@@ -241,6 +249,11 @@ export async function run(argv) {
 
   if (opts.help) {
     process.stdout.write(HELP_TEXT);
+    process.exit(0);
+  }
+
+  if (opts.version) {
+    process.stdout.write(`${VERSION}\n`);
     process.exit(0);
   }
 
