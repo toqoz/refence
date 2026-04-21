@@ -42,7 +42,7 @@
 
               libDir=$out/lib/sence
               mkdir -p "$libDir"
-              cp -r bin src docs package.json LICENSE "$libDir/"
+              cp -r bin src package.json LICENSE "$libDir/"
 
               makeWrapper ${pkgs.nodejs_20}/bin/node $out/bin/sence \
                 --add-flags "$libDir/bin/sence" \

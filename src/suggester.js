@@ -4,14 +4,14 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CHEATSHEET = readFileSync(join(__dirname, "..", "docs", "fence-cheatsheet.md"), "utf-8");
-const TEMPLATE_DIR = join(__dirname, "..", "docs", "fence-templates");
-const SCHEMA_PATH = join(__dirname, "..", "docs", "suggester-schema.json");
+const CHEATSHEET = readFileSync(join(__dirname, "references", "fence-cheatsheet.md"), "utf-8");
+const TEMPLATE_DIR = join(__dirname, "references", "fence-templates");
+const SCHEMA_PATH = join(__dirname, "schema", "suggester-schema.json");
 
 const DEFAULT_MODEL = "gpt-5.4-mini";
 
 // Read the snapshot of the fence builtin template the current policy extends.
-// Snapshots live under docs/fence-templates/ and are refreshed via
+// Snapshots live under src/references/fence-templates/ and are refreshed via
 // bin/refresh-fence-templates.sh. Returns { name, json, entries } or null.
 export function loadExtendsTemplate(currentPolicy) {
   const name = currentPolicy?.extends;

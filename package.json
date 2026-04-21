@@ -16,8 +16,7 @@
   },
   "files": [
     "bin/",
-    "src/",
-    "docs/"
+    "src/"
   ],
   "scripts": {
     "test": "node --test tests/**/*.test.js"

@@ -58,7 +58,7 @@ describe("buildPrompt", () => {
       currentPolicy: { extends: "code" },
       auditSummary: { status: "failed", deniedFiles: [], deniedNetwork: [], suspiciousActions: [], likelyFailureCauses: [] },
     });
-    // A handful of entries that should be present from docs/fence-templates/code.json
+    // A handful of entries that should be present from src/references/fence-templates/code.json
     assert.ok(prompt.includes('"extends": "code"'));
     assert.ok(prompt.includes("registry.npmjs.org"));
     assert.ok(prompt.includes("git push"));

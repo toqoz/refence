@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Refresh docs/fence-templates/*.json from the currently installed fence(1).
-# Run this whenever fence ships a template update sence needs to track.
+# Refresh src/references/fence-templates/*.json from the currently installed
+# fence(1). Run this whenever fence ships a template update sence needs to
+# track.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
-OUT="$ROOT/docs/fence-templates"
+OUT="$ROOT/src/references/fence-templates"
 
 mkdir -p "$OUT"
 

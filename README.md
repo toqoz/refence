@@ -122,8 +122,8 @@ Available fence templates can be listed with:
     $ fence --list-templates
 
 sence ships a snapshot of the allowed fence templates under
-`docs/fence-templates/` so the suggester can see exactly what the
-current `extends` baseline already provides and propose minimal
+`src/references/fence-templates/` so the suggester can see exactly what
+the current `extends` baseline already provides and propose minimal
 additions on top. sence refuses any patch or LLM suggestion that
 would rewrite `extends`. Refresh the snapshots after a fence upgrade
 with:
@@ -156,7 +156,7 @@ Snapshots are kept in `$XDG_STATE_HOME/sence/<key>/snapshots/`.
 The default profile (`default:default`) starts with an empty policy
 `{}`. Use `--profile <template>:<name>` to start from a fence template.
 
-See `docs/fence-cheatsheet.md` for the fence.json format.
+See `src/references/fence-cheatsheet.md` for the fence.json format.
 
 `--rollback` restores a previous snapshot. Snapshots are immutable;
 rollback writes directly without creating a new snapshot, so repeated

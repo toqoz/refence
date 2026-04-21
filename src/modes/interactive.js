@@ -26,8 +26,8 @@ import {
 import { shellQuote, senseExecName } from "../cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const CHEATSHEET = readFileSync(join(__dirname, "..", "..", "docs", "fence-cheatsheet.md"), "utf-8");
-const INTERACTIVE_SCHEMA = join(__dirname, "..", "..", "docs", "interactive-schema.json");
+const CHEATSHEET = readFileSync(join(__dirname, "..", "references", "fence-cheatsheet.md"), "utf-8");
+const INTERACTIVE_SCHEMA = join(__dirname, "..", "schema", "interactive-schema.json");
 
 function buildInteractivePrompt({ currentPolicy, auditSummary, screenContent, originalCommand }) {
   const tmpl = loadExtendsTemplate(currentPolicy);
