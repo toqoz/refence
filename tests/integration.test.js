@@ -1,7 +1,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, existsSync, chmodSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -506,6 +506,111 @@ describe("integration: SENCE_PATCH input normalization", { skip: !hasFence() && 
       assert.ok(
         r.stdout.includes("SENCE_PATCH_CHILD=unset"),
         `child should not see SENCE_PATCH; got stdout:\n${r.stdout}\nstderr:\n${r.stderr}`,
+      );
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Helper: write an executable shell script at `path` that runs `body` with
+  // "$1" bound to the patch path sence is editing. Returns the path.
+  function makeEditor(dir, name, body) {
+    const path = join(dir, name);
+    writeFileSync(path, `#!/bin/sh\n${body}\n`);
+    chmodSync(path, 0o755);
+    return path;
+  }
+
+  it("SENCE_PATCH_EDIT opens $EDITOR and applies the edited patch", () => {
+    const tmp = mkdtempSync(join(TEST_TMP, "patch-edit-"));
+    try {
+      const configDir = join(tmp, "config");
+      const dataDir = join(tmp, "data");
+      const cacheDir = join(tmp, "cache");
+      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir, XDG_CACHE_HOME: cacheDir };
+      const id = seedPatch(cacheDir, "edit-seed", { network: { allowedDomains: ["original.example.com"] } });
+      const editor = makeEditor(tmp, "editor.sh",
+        `cat > "$1" <<'JSON'\n${JSON.stringify({ network: { allowedDomains: ["edited.example.com"] } })}\nJSON`);
+      const r = spawnSync(
+        "node",
+        [BIN, "--suggest", "never", "--", "echo", "x"],
+        { encoding: "utf-8", env: { ...env, VISUAL: editor, EDITOR: editor, SENCE_PATCH_EDIT: id }, timeout: 15_000 },
+      );
+      assert.equal(r.status, 0, `sence failed: ${r.stderr}`);
+      const policy = JSON.parse(readFileSync(join(configDir, "sence", "default:default", "fence.json"), "utf-8"));
+      assert.deepEqual(policy.network.allowedDomains, ["edited.example.com"],
+        `expected edited allowlist, got: ${JSON.stringify(policy)}`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("SENCE_PATCH_EDIT aborts when the editor exits non-zero", () => {
+    const tmp = mkdtempSync(join(TEST_TMP, "patch-edit-abort-"));
+    try {
+      const configDir = join(tmp, "config");
+      const dataDir = join(tmp, "data");
+      const cacheDir = join(tmp, "cache");
+      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir, XDG_CACHE_HOME: cacheDir };
+      const id = seedPatch(cacheDir, "edit-abort-seed", { network: { allowedDomains: ["x.example.com"] } });
+      const editor = makeEditor(tmp, "editor-fail.sh", "exit 3");
+      const r = spawnSync(
+        "node",
+        [BIN, "--suggest", "never", "--", "echo", "x"],
+        { encoding: "utf-8", env: { ...env, VISUAL: editor, EDITOR: editor, SENCE_PATCH_EDIT: id }, timeout: 15_000 },
+      );
+      assert.notEqual(r.status, 0, "sence should abort on editor failure");
+      assert.ok(/exited with status 3/.test(r.stderr), `expected abort message, got: ${r.stderr}`);
+      const policyPath = join(configDir, "sence", "default:default", "fence.json");
+      if (existsSync(policyPath)) {
+        const policy = JSON.parse(readFileSync(policyPath, "utf-8"));
+        const allow = policy?.network?.allowedDomains ?? [];
+        assert.ok(!allow.includes("x.example.com"),
+          `patch should not be applied when editor aborts; got: ${JSON.stringify(policy)}`);
+      }
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses SENCE_PATCH and SENCE_PATCH_EDIT together", () => {
+    const tmp = mkdtempSync(join(TEST_TMP, "patch-edit-both-"));
+    try {
+      const configDir = join(tmp, "config");
+      const dataDir = join(tmp, "data");
+      const cacheDir = join(tmp, "cache");
+      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir, XDG_CACHE_HOME: cacheDir };
+      const id = seedPatch(cacheDir, "edit-both-seed", {});
+      const r = spawnSync(
+        "node",
+        [BIN, "--suggest", "never", "--", "echo", "x"],
+        { encoding: "utf-8", env: { ...env, SENCE_PATCH: id, SENCE_PATCH_EDIT: id }, timeout: 15_000 },
+      );
+      assert.notEqual(r.status, 0);
+      assert.ok(/mutually exclusive/.test(r.stderr), `expected mutex message, got: ${r.stderr}`);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("scrubs SENCE_PATCH_EDIT from the wrapped command's environment", () => {
+    const tmp = mkdtempSync(join(TEST_TMP, "patch-edit-scrub-"));
+    try {
+      const configDir = join(tmp, "config");
+      const dataDir = join(tmp, "data");
+      const cacheDir = join(tmp, "cache");
+      const env = { ...process.env, XDG_CONFIG_HOME: configDir, XDG_DATA_HOME: dataDir, XDG_CACHE_HOME: cacheDir };
+      const id = seedPatch(cacheDir, "edit-scrub-seed", {});
+      const editor = makeEditor(tmp, "editor-noop.sh", "exit 0");
+      const r = spawnSync(
+        "node",
+        [BIN, "--suggest", "never", "--", "sh", "-c", "echo EDIT_CHILD=${SENCE_PATCH_EDIT:-unset}"],
+        { encoding: "utf-8", env: { ...env, VISUAL: editor, EDITOR: editor, SENCE_PATCH_EDIT: id }, timeout: 15_000 },
+      );
+      assert.equal(r.status, 0, `sence failed: ${r.stderr}`);
+      assert.ok(
+        r.stdout.includes("EDIT_CHILD=unset"),
+        `child should not see SENCE_PATCH_EDIT; got stdout:\n${r.stdout}\nstderr:\n${r.stderr}`,
       );
     } finally {
       rmSync(tmp, { recursive: true, force: true });

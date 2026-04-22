@@ -213,6 +213,7 @@ export async function runInteractiveMode({ command, policyPath, snapshotDir, get
     const reRunCmd = buildReRunCommand({ patchId, profile, suffix });
     const label = rec.resumeCommand ? "To apply and resume" : "To apply and re-run";
     process.stderr.write(`\n${label}:\n  ${reRunCmd}\n`);
+    process.stderr.write(`  (replace SENCE_PATCH with SENCE_PATCH_EDIT to open $EDITOR first)\n`);
   }
 
   process.exit(exitCode);

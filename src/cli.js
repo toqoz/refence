@@ -1,4 +1,5 @@
 import { accessSync, constants as fsConstants, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { execute } from "./executor.js";
 import { audit } from "./auditor.js";
 import { runSuggester, loadExtendsTemplate } from "./suggester.js";
@@ -40,6 +41,9 @@ Environment:
   SENCE_PATCH=<id>             Apply a suggested patch (identifier printed by a
                                prior sence run) from $XDG_CACHE_HOME/sence/patches/
                                before executing the command.
+  SENCE_PATCH_EDIT=<id>        Open the patch in $VISUAL / $EDITOR (fallback: vi),
+                               then apply the edited version before executing the
+                               command. Mutually exclusive with SENCE_PATCH.
 
 Examples:
   sence npm install
@@ -49,6 +53,7 @@ Examples:
   sence --profile strict npm install
   sence --profile code:local:. npm install   # fence.json in cwd
   SENCE_PATCH=2026-04-21-npm-registry-abcdef sence npm install
+  SENCE_PATCH_EDIT=2026-04-21-npm-registry-abcdef sence npm install
   sence --rollback
 `;
 
@@ -277,6 +282,30 @@ function buildSenseCmd(opts) {
   return parts;
 }
 
+// Open `patchPath` in the user's editor and wait for it to close.
+// Resolution order: $VISUAL → $EDITOR → vi. $VISUAL/$EDITOR can carry args
+// (e.g. `code --wait`), so we run through a shell and let it parse them;
+// the patch path is shell-quoted to stay safe regardless of the filename.
+// Returns `{ error }` — `error` is a string on failure, otherwise null.
+function openPatchInEditor(patchPath) {
+  const editor = process.env.VISUAL || process.env.EDITOR || "vi";
+  const cmd = `${editor} ${shellQuote(patchPath)}`;
+  const result = spawnSync(cmd, {
+    stdio: "inherit",
+    shell: true,
+  });
+  if (result.error) {
+    return { error: `Failed to launch editor (${editor}): ${result.error.message}` };
+  }
+  if (result.signal) {
+    return { error: `Editor (${editor}) killed by signal ${result.signal}; aborting` };
+  }
+  if (result.status !== 0) {
+    return { error: `Editor (${editor}) exited with status ${result.status}; aborting` };
+  }
+  return { error: null };
+}
+
 export { shellQuote, senseExecName };
 
 export async function run(argv) {
@@ -354,21 +383,27 @@ export async function run(argv) {
     process.exit(2);
   }
 
-  // SENCE_PATCH: merge patch into current policy before running. The value is
-  // an identifier produced by a previous sence run; the actual JSON lives in
-  // the cache dir. To hand-edit, modify the file under ~/.cache/sence/patches/
-  // directly rather than threading a new path through the CLI. The env-var
-  // form (instead of a --patch flag) keeps shell history clean and lets the
-  // user scope the apply to a single invocation without leaving a noisy,
-  // hard-to-distinguish history entry.
+  // SENCE_PATCH / SENCE_PATCH_EDIT: merge a patch into the current policy
+  // before running. The value is an identifier produced by a previous sence
+  // run; the actual JSON lives in the cache dir. SENCE_PATCH_EDIT opens
+  // $VISUAL / $EDITOR on the file first so the user can tweak the proposal
+  // in-line; saving and quitting the editor proceeds with the edited patch,
+  // while a non-zero exit aborts (git-commit convention).
   //
-  // Scrub the variable immediately so it can't leak into the wrapped command
-  // (fence plus everything it spawns). A patch apply is a one-shot effect at
-  // the sence boundary; without scrubbing, an accidentally exported
-  // SENCE_PATCH — or a nested `sence` invocation launched by an agent — would
+  // Scrub the variables immediately so they can't leak into the wrapped
+  // command (fence plus everything it spawns). A patch apply is a one-shot
+  // effect at the sence boundary; without scrubbing, an accidentally exported
+  // variable — or a nested `sence` invocation launched by an agent — would
   // silently re-apply on every descendant.
-  const patchId = process.env.SENCE_PATCH || undefined;
+  const patchIdApply = process.env.SENCE_PATCH || undefined;
+  const patchIdEdit = process.env.SENCE_PATCH_EDIT || undefined;
   delete process.env.SENCE_PATCH;
+  delete process.env.SENCE_PATCH_EDIT;
+  if (patchIdApply && patchIdEdit) {
+    process.stderr.write(`[sence] SENCE_PATCH and SENCE_PATCH_EDIT are mutually exclusive\n`);
+    process.exit(2);
+  }
+  const patchId = patchIdApply || patchIdEdit;
   if (patchId) {
     let patchPath;
     try {
@@ -376,6 +411,13 @@ export async function run(argv) {
     } catch (err) {
       process.stderr.write(`[sence] ${err.message}\n`);
       process.exit(2);
+    }
+    if (patchIdEdit) {
+      const editResult = openPatchInEditor(patchPath);
+      if (editResult.error) {
+        process.stderr.write(`[sence] ${editResult.error}\n`);
+        process.exit(2);
+      }
     }
     try {
       const patchData = JSON.parse(readFileSync(patchPath, "utf-8"));
@@ -496,6 +538,7 @@ export async function run(argv) {
     const cmdParts = [`SENCE_PATCH=${shellQuote(rec.patchId)}`, ...buildSenseCmd(opts)];
     cmdParts.push("--", ...opts.command.map(shellQuote));
     process.stderr.write(`\nTo apply and re-run:\n  ${cmdParts.join(" ")}\n`);
+    process.stderr.write(`  (replace SENCE_PATCH with SENCE_PATCH_EDIT to open $EDITOR first)\n`);
   }
 
   process.exit(execResult.exitCode);
