@@ -259,4 +259,43 @@ describe("senseExecName", () => {
     // cwd remains origCwd (the repo root), which is outside tmp.
     assert.equal(senseExecName(), exe);
   });
+
+  it("collapses when PATH has a wrapper script that exec's argv[1] (Nix/npm shim)", () => {
+    const real = makeExe(join(tmp, "lib", "sence", "bin"), "sence");
+    const wrapperDir = join(tmp, "bin");
+    mkdirSync(wrapperDir, { recursive: true });
+    const wrapper = join(wrapperDir, "sence");
+    writeFileSync(wrapper, `#!/bin/sh\nexec /usr/bin/node ${real} "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    process.argv[1] = real;
+    process.env.PATH = wrapperDir;
+    assert.equal(senseExecName(), "sence");
+  });
+
+  it("does not collapse when the PATH wrapper does not reference argv[1]", () => {
+    const real = makeExe(join(tmp, "real"), "sence");
+    const wrapperDir = join(tmp, "bin");
+    mkdirSync(wrapperDir, { recursive: true });
+    const wrapper = join(wrapperDir, "sence");
+    writeFileSync(wrapper, `#!/bin/sh\nexec /some/other/sence "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    process.argv[1] = real;
+    process.env.PATH = wrapperDir;
+    process.chdir(tmp);
+    assert.equal(senseExecName(), "real/sence");
+  });
+
+  it("does not treat a non-shebang file containing argv[1] as a wrapper", () => {
+    const real = makeExe(join(tmp, "real"), "sence");
+    const fakeDir = join(tmp, "bin");
+    mkdirSync(fakeDir, { recursive: true });
+    const fake = join(fakeDir, "sence");
+    // No shebang — could be an ELF/Mach-O that happens to contain the path.
+    writeFileSync(fake, `random bytes ${real} more bytes\n`);
+    chmodSync(fake, 0o755);
+    process.argv[1] = real;
+    process.env.PATH = fakeDir;
+    process.chdir(tmp);
+    assert.equal(senseExecName(), "real/sence");
+  });
 });

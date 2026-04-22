@@ -196,8 +196,10 @@ function shellQuote(s) {
 // the exact string the user typed. We approximate it in two steps:
 //   1. If `basename(argv[1])` is found on PATH — skipping non-file and
 //      non-executable entries the way a real shell search does — and the
-//      first executable match is the same file (dev+ino), collapse to the
-//      basename (so `sence` round-trips as `sence`, not the install path).
+//      first executable match either is the same file (dev+ino) or is a
+//      shell-script wrapper that exec's into argv[1] (Nix/npm/pnpm shims),
+//      collapse to the basename (so `sence` round-trips as `sence`, not
+//      the install path).
 //   2. Otherwise, if argv[1] is inside cwd, display it relative to cwd
 //      (so `bin/sence` round-trips as `bin/sence`). Fall back to the
 //      absolute path for anything outside cwd.
@@ -228,13 +230,36 @@ function senseExecName() {
     } catch {
       continue;
     }
-    // First executable PATH match: collapse only if it's the same file.
+    // First executable PATH match: collapse if same file, or if it's a
+    // wrapper script that references argv[1].
     if (s.ino === argv1Stat.ino && s.dev === argv1Stat.dev) {
+      return shellQuote(base);
+    }
+    if (isWrapperFor(candidate, s.size, argv1)) {
       return shellQuote(base);
     }
     break;
   }
   return shellQuote(displayPath(argv1));
+}
+
+// Detect a shell wrapper that ultimately launches `target`. Nix/npm/pnpm
+// install layouts place a tiny wrapper on PATH that `exec`s into a script
+// elsewhere in the store; the wrapper and the wrapped script have different
+// inodes, so dev+ino matching misses this case. The wrapper always embeds
+// the wrapped script's absolute path as a literal string, which gives us a
+// cheap, general signal. We cap the read at 64 KiB and require a shebang to
+// avoid scanning arbitrary binaries on PATH.
+function isWrapperFor(candidate, size, target) {
+  if (size > 65536) return false;
+  let content;
+  try {
+    content = readFileSync(candidate, "utf8");
+  } catch {
+    return false;
+  }
+  if (!content.startsWith("#!")) return false;
+  return content.includes(target);
 }
 
 // Pick the shorter of cwd-relative vs absolute, preserving shell-executable
