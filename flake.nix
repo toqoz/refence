@@ -44,7 +44,7 @@
               mkdir -p "$libDir"
               cp -r bin src package.json LICENSE "$libDir/"
 
-              makeWrapper ${pkgs.nodejs_20}/bin/node $out/bin/sence \
+              makeWrapper ${pkgs.nodejs_24}/bin/node $out/bin/sence \
                 --add-flags "$libDir/bin/sence" \
                 --suffix PATH : ${pkgs.lib.makeBinPath [ pkgs.tmux ]}
 
@@ -70,7 +70,7 @@
         {
           default = pkgs.mkShell {
             packages = [
-              pkgs.nodejs_20
+              pkgs.nodejs_24
               pkgs.tmux
             ];
           };
